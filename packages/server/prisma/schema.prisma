@@ -1,0 +1,275 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== Auth & Household ====================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+
+  householdMemberships HouseholdMember[]
+  createdHouseholds    Household[]       @relation("CreatedByUser")
+  priceRecords         PriceRecord[]
+  storageItems         StorageItem[]
+  recipes              Recipe[]
+  transactions         Transaction[]
+}
+
+model Household {
+  id              String   @id @default(uuid())
+  name            String
+  defaultCurrency String   @default("USD")
+  createdAt       DateTime @default(now())
+  createdById     String
+  createdBy       User     @relation("CreatedByUser", fields: [createdById], references: [id])
+  inviteCode      String   @unique @default(uuid())
+
+  members            HouseholdMember[]
+  stores             Store[]
+  storageSpaces      StorageSpace[]
+  recipes            Recipe[]
+  categories         Category[]
+  transactions       Transaction[]
+  householdCurrencies HouseholdCurrency[]
+}
+
+model HouseholdMember {
+  householdId String
+  userId      String
+  role        HouseholdRole @default(MEMBER)
+  invitedAt   DateTime      @default(now())
+  acceptedAt  DateTime?
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([householdId, userId])
+}
+
+enum HouseholdRole {
+  OWNER
+  MEMBER
+}
+
+// ==================== Grocery Management ====================
+
+model Product {
+  id               String   @id @default(uuid())
+  barcode          String?  @unique
+  name             String
+  brand            String?
+  imageUrl         String?
+  nutritionalFacts Json?
+  offRawData       Json?
+  createdAt        DateTime @default(now())
+
+  priceRecords     PriceRecord[]
+  storageItems     StorageItem[]
+  recipeIngredients RecipeIngredient[]
+}
+
+model Store {
+  id          String   @id @default(uuid())
+  householdId String
+  name        String
+  location    String?
+  createdAt   DateTime @default(now())
+
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  priceRecords PriceRecord[]
+
+  @@index([householdId])
+}
+
+model PriceRecord {
+  id           String   @id @default(uuid())
+  productId    String
+  storeId      String
+  price        Float
+  currencyCode String
+  recordedAt   DateTime @default(now())
+  recordedById String
+
+  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store      Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation(fields: [recordedById], references: [id])
+
+  @@index([productId, storeId])
+  @@index([productId, recordedAt])
+}
+
+// ==================== Home Storage ====================
+
+model StorageSpace {
+  id          String    @id @default(uuid())
+  householdId String
+  name        String
+  description String?
+  spaceType   SpaceType @default(OTHER)
+  sortOrder   Int       @default(0)
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  items     StorageItem[]
+
+  @@index([householdId])
+}
+
+enum SpaceType {
+  FRIDGE
+  FREEZER
+  PANTRY
+  CABINET
+  OTHER
+}
+
+model StorageItem {
+  id             String    @id @default(uuid())
+  storageSpaceId String
+  productId      String
+  quantity       Float
+  unit           String    @default("units")
+  addedAt        DateTime  @default(now())
+  expiryDate     DateTime?
+  addedById      String
+
+  storageSpace StorageSpace @relation(fields: [storageSpaceId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+  addedBy      User         @relation(fields: [addedById], references: [id])
+
+  @@index([storageSpaceId])
+  @@index([productId])
+}
+
+// ==================== Recipes ====================
+
+model Recipe {
+  id                 String       @id @default(uuid())
+  householdId        String
+  name               String
+  description        String?
+  servings           Int          @default(1)
+  servingUnit        String?
+  servingWeightGrams Float?
+  prepTime           Int?
+  cookTime           Int?
+  imageUrl           String?
+  source             RecipeSource @default(USER)
+  externalId         String?
+  createdById        String
+  createdAt          DateTime     @default(now())
+
+  household   Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy   User               @relation(fields: [createdById], references: [id])
+  ingredients RecipeIngredient[]
+
+  @@index([householdId])
+}
+
+enum RecipeSource {
+  USER
+  EXTERNAL
+}
+
+model RecipeIngredient {
+  id        String  @id @default(uuid())
+  recipeId  String
+  productId String
+  quantity  Float
+  unit      String
+  notes     String?
+
+  recipe  Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([recipeId])
+}
+
+// ==================== Finance ====================
+
+model Category {
+  id          String       @id @default(uuid())
+  householdId String
+  parentId    String?
+  name        String
+  type        CategoryType
+  level       Int          @default(0)
+  sortOrder   Int          @default(0)
+  icon        String?
+
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  parent       Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children     Category[]    @relation("CategoryHierarchy")
+  transactions Transaction[]
+
+  @@index([householdId])
+  @@index([parentId])
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+model Transaction {
+  id           String          @id @default(uuid())
+  householdId  String
+  categoryId   String
+  amount       Float
+  currencyCode String
+  type         TransactionType
+  description  String?
+  date         DateTime
+  createdById  String
+  createdAt    DateTime        @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id])
+  createdBy User      @relation(fields: [createdById], references: [id])
+
+  @@index([householdId, date])
+  @@index([categoryId])
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+// ==================== Currency ====================
+
+model Currency {
+  code   String @id
+  name   String
+  symbol String
+}
+
+model HouseholdCurrency {
+  householdId  String
+  currencyCode String
+  isDefault    Boolean @default(false)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@id([householdId, currencyCode])
+}
+
+model ExchangeRate {
+  id           String   @id @default(uuid())
+  fromCurrency String
+  toCurrency   String
+  rate         Float
+  date         DateTime
+  source       String   @default("frankfurter")
+
+  @@unique([fromCurrency, toCurrency, date])
+  @@index([fromCurrency, toCurrency])
+}

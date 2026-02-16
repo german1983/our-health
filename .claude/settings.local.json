@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:wiki.openfoodfacts.org)",
+      "WebFetch(domain:openfoodfacts.github.io)",
+      "WebFetch(domain:www.exchangerate-api.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:spoonacular.com)",
+      "WebFetch(domain:www.themealdb.com)",
+      "Bash(npm install:*)",
+      "Bash(npx -w packages/server prisma generate:*)",
+      "Bash(npm run build:shared:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx vite build)"
+    ]
+  }
+}
