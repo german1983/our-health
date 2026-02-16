@@ -17,6 +17,7 @@ export const createProductSchema = z.object({
   brand: z.string().max(200).optional(),
   imageUrl: z.string().url().optional(),
   nutritionalFacts: nutritionalFactsSchema.optional(),
+  nutritionBaseGrams: z.number().positive().optional(),
 });
 
 export const createStoreSchema = z.object({
@@ -54,6 +55,11 @@ export type UpdateStoreInput = z.infer<typeof updateStoreSchema>;
 export type CreatePriceRecordInput = z.infer<typeof createPriceRecordSchema>;
 export type ProductSearchInput = z.infer<typeof productSearchSchema>;
 
+export interface BrandResponse {
+  id: string;
+  name: string;
+}
+
 export interface ProductResponse {
   id: string;
   barcode: string | null;
@@ -61,6 +67,7 @@ export interface ProductResponse {
   brand: string | null;
   imageUrl: string | null;
   nutritionalFacts: NutritionalFacts | null;
+  nutritionBaseGrams: number;
   createdAt: string;
 }
 

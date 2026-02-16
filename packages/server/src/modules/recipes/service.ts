@@ -38,6 +38,7 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
+    nutritionBaseGrams: ing.product.nutritionBaseGrams,
   }));
 
   const totalNutrition = calculateTotalNutrition(ingredients);
@@ -87,6 +88,7 @@ export async function createRecipe(input: CreateRecipeInput, householdId: string
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
+    nutritionBaseGrams: ing.product.nutritionBaseGrams,
   }));
 
   const totalNutrition = calculateTotalNutrition(ingredients);
@@ -210,7 +212,7 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
 // ==================== Nutrition Helpers ====================
 
 function calculateTotalNutrition(
-  ingredients: { quantity: number; nutritionalFacts: NutritionalFacts | null }[],
+  ingredients: { quantity: number; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams?: number }[],
 ): NutritionalFacts {
   const total: NutritionalFacts = {
     calories: 0,
@@ -225,8 +227,8 @@ function calculateTotalNutrition(
 
   for (const ing of ingredients) {
     if (!ing.nutritionalFacts) continue;
-    // Nutrition is per 100g; multiply by quantity/100 (assuming quantity in grams)
-    const factor = ing.quantity / 100;
+    const baseGrams = ing.nutritionBaseGrams || 100;
+    const factor = ing.quantity / baseGrams;
     const nf = ing.nutritionalFacts;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;

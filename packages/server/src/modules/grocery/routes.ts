@@ -41,6 +41,17 @@ router.post('/products', authenticate, validate(createProductSchema), async (req
   }
 });
 
+// Brands
+router.get('/brands', authenticate, async (req, res, next) => {
+  try {
+    const query = (req.query.query as string) || '';
+    const brands = await groceryService.searchBrands(query);
+    res.json(brands);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Stores (household-scoped)
 router.get('/stores', authenticate, requireHousehold, async (req, res, next) => {
   try {

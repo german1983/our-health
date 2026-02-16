@@ -22,6 +22,8 @@ model User {
   storageItems         StorageItem[]
   recipes              Recipe[]
   transactions         Transaction[]
+  dailyLogs            DailyLog[]
+  productServingUnits  ProductServingUnit[]
 }
 
 model Household {
@@ -62,19 +64,34 @@ enum HouseholdRole {
 
 // ==================== Grocery Management ====================
 
-model Product {
-  id               String   @id @default(uuid())
-  barcode          String?  @unique
-  name             String
-  brand            String?
-  imageUrl         String?
-  nutritionalFacts Json?
-  offRawData       Json?
-  createdAt        DateTime @default(now())
+model Brand {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
 
-  priceRecords     PriceRecord[]
-  storageItems     StorageItem[]
-  recipeIngredients RecipeIngredient[]
+  products Product[]
+}
+
+model Product {
+  id                 String   @id @default(uuid())
+  barcode            String?  @unique
+  name               String
+  brand              String?
+  brandId            String?
+  imageUrl           String?
+  nutritionalFacts   Json?
+  nutritionBaseGrams Float    @default(100)
+  offRawData         Json?
+  createdAt          DateTime @default(now())
+
+  brandRef            Brand?              @relation(fields: [brandId], references: [id])
+  priceRecords        PriceRecord[]
+  storageItems        StorageItem[]
+  recipeIngredients   RecipeIngredient[]
+  intakeEntries       IntakeEntry[]
+  productServingUnits ProductServingUnit[]
+
+  @@index([brandId])
 }
 
 model Store {
@@ -170,6 +187,7 @@ model Recipe {
   household   Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   createdBy   User               @relation(fields: [createdById], references: [id])
   ingredients RecipeIngredient[]
+  intakeEntries IntakeEntry[]
 
   @@index([householdId])
 }
@@ -272,4 +290,65 @@ model ExchangeRate {
 
   @@unique([fromCurrency, toCurrency, date])
   @@index([fromCurrency, toCurrency])
+}
+
+// ==================== Daily Intake ====================
+
+enum MealSlot {
+  BREAKFAST
+  MID_MORNING_SNACK
+  LUNCH
+  AFTERNOON_SNACK
+  DINNER
+  EVENING_SNACK
+}
+
+model DailyLog {
+  id        String        @id @default(uuid())
+  userId    String
+  date      DateTime      @db.Date
+  notes     String?
+  createdAt DateTime      @default(now())
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries IntakeEntry[]
+
+  @@unique([userId, date])
+  @@index([userId])
+}
+
+model IntakeEntry {
+  id            String    @id @default(uuid())
+  dailyLogId    String
+  mealSlot      MealSlot
+  productId     String?
+  recipeId      String?
+  quantity      Float
+  servingUnitId String?
+  notes         String?
+  sortOrder     Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  dailyLog    DailyLog            @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  product     Product?            @relation(fields: [productId], references: [id])
+  recipe      Recipe?             @relation(fields: [recipeId], references: [id])
+  servingUnit ProductServingUnit? @relation(fields: [servingUnitId], references: [id], onDelete: SetNull)
+
+  @@index([dailyLogId])
+}
+
+model ProductServingUnit {
+  id              String   @id @default(uuid())
+  productId       String
+  userId          String
+  name            String
+  gramsEquivalent Float
+  createdAt       DateTime @default(now())
+
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  intakeEntries IntakeEntry[]
+
+  @@unique([productId, userId, name])
+  @@index([productId, userId])
 }

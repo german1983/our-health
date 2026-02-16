@@ -14,7 +14,9 @@
       "Bash(npx tsc:*)",
       "Bash(npm ls:*)",
       "Bash(npx vite build)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(npx:*)",
+      "Bash(tasklist:*)"
     ]
   }
 }

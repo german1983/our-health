@@ -40,6 +40,7 @@ export {
   type UpdateStoreInput,
   type CreatePriceRecordInput,
   type ProductSearchInput,
+  type BrandResponse,
   type ProductResponse,
   type StoreResponse,
   type PriceRecordResponse,
@@ -106,3 +107,26 @@ export {
   type ExchangeRateResponse,
   type ConvertCurrencyResponse,
 } from './schemas/currency.js';
+
+// Intake
+export {
+  mealSlotEnum,
+  createServingUnitSchema,
+  updateServingUnitSchema,
+  createIntakeEntrySchema,
+  updateIntakeEntrySchema,
+  dailyLogQuerySchema,
+  intakeSummaryQuerySchema,
+  type MealSlot,
+  type CreateServingUnitInput,
+  type UpdateServingUnitInput,
+  type CreateIntakeEntryInput,
+  type UpdateIntakeEntryInput,
+  type DailyLogQueryInput,
+  type IntakeSummaryQueryInput,
+  type ServingUnitResponse,
+  type IntakeEntryResponse,
+  type MealGroup,
+  type DailyLogResponse,
+  type IntakeSummaryResponse,
+} from './schemas/intake.js';

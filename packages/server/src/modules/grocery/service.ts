@@ -6,6 +6,7 @@ import type {
   CreateStoreInput,
   UpdateStoreInput,
   CreatePriceRecordInput,
+  BrandResponse,
   ProductResponse,
   StoreResponse,
   PriceRecordResponse,
@@ -26,11 +27,22 @@ export async function lookupByBarcode(barcode: string): Promise<ProductResponse>
     throw new NotFoundError('Product not found for this barcode');
   }
 
+  let brandId: string | undefined;
+  if (offData.brand) {
+    const brand = await prisma.brand.upsert({
+      where: { name: offData.brand },
+      create: { name: offData.brand },
+      update: {},
+    });
+    brandId = brand.id;
+  }
+
   const product = await prisma.product.create({
     data: {
       barcode,
       name: offData.name,
       brand: offData.brand,
+      brandId,
       imageUrl: offData.imageUrl,
       nutritionalFacts: offData.nutritionalFacts ?? undefined,
       offRawData: offData.rawData as object,
@@ -71,16 +83,39 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
 }
 
 export async function createProduct(input: CreateProductInput): Promise<ProductResponse> {
+  let brandId: string | undefined;
+  if (input.brand) {
+    const brand = await prisma.brand.upsert({
+      where: { name: input.brand },
+      create: { name: input.brand },
+      update: {},
+    });
+    brandId = brand.id;
+  }
+
   const product = await prisma.product.create({
     data: {
       barcode: input.barcode,
       name: input.name,
       brand: input.brand,
+      brandId,
       imageUrl: input.imageUrl,
       nutritionalFacts: input.nutritionalFacts ?? undefined,
+      nutritionBaseGrams: input.nutritionBaseGrams ?? 100,
     },
   });
   return formatProduct(product);
+}
+
+// ==================== Brands ====================
+
+export async function searchBrands(query: string): Promise<BrandResponse[]> {
+  const brands = await prisma.brand.findMany({
+    where: { name: { contains: query, mode: 'insensitive' } },
+    orderBy: { name: 'asc' },
+    take: 20,
+  });
+  return brands.map((b) => ({ id: b.id, name: b.name }));
 }
 
 // ==================== Stores ====================
@@ -226,6 +261,7 @@ function formatProduct(p: {
   brand: string | null;
   imageUrl: string | null;
   nutritionalFacts: unknown;
+  nutritionBaseGrams: number;
   createdAt: Date;
 }): ProductResponse {
   return {
@@ -235,6 +271,7 @@ function formatProduct(p: {
     brand: p.brand,
     imageUrl: p.imageUrl,
     nutritionalFacts: p.nutritionalFacts as ProductResponse['nutritionalFacts'],
+    nutritionBaseGrams: p.nutritionBaseGrams,
     createdAt: p.createdAt.toISOString(),
   };
 }

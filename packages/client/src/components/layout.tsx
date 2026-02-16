@@ -7,6 +7,7 @@ const navItems = [
   { path: '/grocery', label: 'Grocery', icon: 'ShoppingCart' },
   { path: '/storage', label: 'Storage', icon: 'Package' },
   { path: '/recipes', label: 'Recipes', icon: 'ChefHat' },
+  { path: '/intake', label: 'Intake', icon: 'Utensils' },
   { path: '/finance', label: 'Finance', icon: 'DollarSign' },
   { path: '/household', label: 'Household', icon: 'Users' },
 ];
