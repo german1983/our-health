@@ -11,6 +11,7 @@ import recipeRoutes from './modules/recipes/routes.js';
 import financeRoutes from './modules/finance/routes.js';
 import currencyRoutes from './modules/currency/routes.js';
 import intakeRoutes from './modules/intake/routes.js';
+import receiptRoutes from './modules/receipt/routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,6 +36,7 @@ app.use('/api/recipes', recipeRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/currencies', currencyRoutes);
 app.use('/api/intake', intakeRoutes);
+app.use('/api/receipts', receiptRoutes);
 
 // Error handling
 app.use(errorHandler);
