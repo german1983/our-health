@@ -6,12 +6,13 @@ export type ReceiptStatus = z.infer<typeof receiptStatusEnum>;
 export const supportedReceiptStores = z.enum(['WALMART', 'LOBLAWS', 'FARM_BOY', 'UNKNOWN']);
 export type SupportedReceiptStore = z.infer<typeof supportedReceiptStores>;
 
-export const uploadReceiptSchema = z.object({
+export const createReceiptSchema = z.object({
+  rawText: z.string().min(1, 'rawText is required').max(50_000),
   storeId: z.string().uuid().optional(),
   storeHint: supportedReceiptStores.optional(),
   currencyCode: z.string().length(3).default('CAD'),
 });
-export type UploadReceiptInput = z.infer<typeof uploadReceiptSchema>;
+export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
 
 export const confirmReceiptItemSchema = z.object({
   productId: z.string().uuid(),

@@ -1,42 +1,30 @@
 import { Router } from 'express';
-import multer from 'multer';
 import {
   confirmReceiptItemSchema,
+  createReceiptSchema,
   supportedReceiptStores,
 } from '@personal-budget/shared';
 import { authenticate, requireHousehold } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
-import { ValidationError } from '../../lib/errors.js';
 import * as receiptService from './service.js';
 
 const router = Router();
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 },
-});
 
 router.post(
   '/',
   authenticate,
   requireHousehold,
-  upload.single('image'),
+  validate(createReceiptSchema),
   async (req, res, next) => {
     try {
-      if (!req.file) throw new ValidationError('Missing "image" file in form-data');
-
-      const rawHint = typeof req.body.storeHint === 'string' ? req.body.storeHint : undefined;
-      const storeHint = rawHint ? supportedReceiptStores.parse(rawHint) : undefined;
-      const storeId = typeof req.body.storeId === 'string' && req.body.storeId.length > 0
-        ? req.body.storeId
-        : undefined;
-      const currencyCode = typeof req.body.currencyCode === 'string' && req.body.currencyCode.length === 3
-        ? req.body.currencyCode.toUpperCase()
-        : 'CAD';
-
-      const receipt = await receiptService.uploadReceipt({
-        buffer: req.file.buffer,
-        mimetype: req.file.mimetype,
+      const { rawText, storeHint, storeId, currencyCode } = req.body as {
+        rawText: string;
+        storeHint?: string;
+        storeId?: string;
+        currencyCode: string;
+      };
+      const receipt = await receiptService.createReceipt({
+        rawText,
         storeHint,
         storeId,
         currencyCode,

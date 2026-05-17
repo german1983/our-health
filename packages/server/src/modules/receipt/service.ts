@@ -1,8 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
-import { NotFoundError, ValidationError } from '../../lib/errors.js';
+import { NotFoundError } from '../../lib/errors.js';
 import type { ReceiptItemResponse, ReceiptResponse } from '@personal-budget/shared';
-import { extractText, preprocessReceipt } from './ocr.js';
 import { parseReceipt } from './parsers/index.js';
 
 const receiptItemWithProduct = Prisma.validator<Prisma.ReceiptItemDefaultArgs>()({
@@ -15,9 +14,8 @@ const receiptWithItems = Prisma.validator<Prisma.ReceiptDefaultArgs>()({
 });
 type ReceiptWithItems = Prisma.ReceiptGetPayload<typeof receiptWithItems>;
 
-export interface UploadReceiptOptions {
-  buffer: Buffer;
-  mimetype: string;
+export interface CreateReceiptOptions {
+  rawText: string;
   storeHint?: string;
   storeId?: string;
   currencyCode: string;
@@ -25,11 +23,7 @@ export interface UploadReceiptOptions {
   userId: string;
 }
 
-export async function uploadReceipt(opts: UploadReceiptOptions): Promise<ReceiptResponse> {
-  if (!opts.mimetype.startsWith('image/')) {
-    throw new ValidationError('File must be an image');
-  }
-
+export async function createReceipt(opts: CreateReceiptOptions): Promise<ReceiptResponse> {
   if (opts.storeId) {
     const store = await prisma.store.findFirst({
       where: { id: opts.storeId, householdId: opts.householdId },
@@ -37,9 +31,7 @@ export async function uploadReceipt(opts: UploadReceiptOptions): Promise<Receipt
     if (!store) throw new NotFoundError('Store');
   }
 
-  const processed = await preprocessReceipt(opts.buffer);
-  const rawText = await extractText(processed);
-  const parsed = parseReceipt(rawText, opts.storeHint);
+  const parsed = parseReceipt(opts.rawText, opts.storeHint);
 
   const itemsToCreate = await Promise.all(
     parsed.items.map(async (item) => {
@@ -71,7 +63,7 @@ export async function uploadReceipt(opts: UploadReceiptOptions): Promise<Receipt
       storeId: opts.storeId,
       store: parsed.store,
       parserVersion: parsed.parserVersion,
-      rawText,
+      rawText: opts.rawText,
       parsedData: parsed as unknown as Prisma.InputJsonValue,
       status,
       purchasedAt: parsed.purchasedAt ?? null,

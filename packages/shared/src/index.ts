@@ -112,11 +112,11 @@ export {
 export {
   receiptStatusEnum,
   supportedReceiptStores,
-  uploadReceiptSchema,
+  createReceiptSchema,
   confirmReceiptItemSchema,
   type ReceiptStatus,
   type SupportedReceiptStore,
-  type UploadReceiptInput,
+  type CreateReceiptInput,
   type ConfirmReceiptItemInput,
   type ReceiptItemResponse,
   type ReceiptResponse,
