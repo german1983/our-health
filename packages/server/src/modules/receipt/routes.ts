@@ -68,6 +68,30 @@ router.get('/:id', authenticate, requireHousehold, async (req, res, next) => {
   }
 });
 
+router.get('/:id/raw', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const rawText = await receiptService.getReceiptRawText(req.params.id, req.householdId!);
+    res.type('text/plain').send(rawText);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/reparse', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const rawHint = typeof req.body?.storeHint === 'string' ? req.body.storeHint : undefined;
+    const storeHint = rawHint ? supportedReceiptStores.parse(rawHint) : undefined;
+    const receipt = await receiptService.reparseReceipt({
+      receiptId: req.params.id,
+      householdId: req.householdId!,
+      storeHint,
+    });
+    res.json(receipt);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post(
   '/items/:itemId/confirm',
   authenticate,

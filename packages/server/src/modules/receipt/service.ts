@@ -121,6 +121,77 @@ export async function listReceipts(householdId: string): Promise<ReceiptResponse
   return receipts.map(formatReceipt);
 }
 
+export async function getReceiptRawText(id: string, householdId: string): Promise<string> {
+  const receipt = await prisma.receipt.findFirst({
+    where: { id, householdId },
+    select: { rawText: true },
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  return receipt.rawText;
+}
+
+export interface ReparseOptions {
+  receiptId: string;
+  householdId: string;
+  storeHint?: string;
+}
+
+export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptResponse> {
+  const existing = await prisma.receipt.findFirst({
+    where: { id: opts.receiptId, householdId: opts.householdId },
+  });
+  if (!existing) throw new NotFoundError('Receipt');
+
+  const parsed = parseReceipt(existing.rawText, opts.storeHint);
+
+  const itemsToCreate = await Promise.all(
+    parsed.items.map(async (item) => {
+      let productId: string | null = null;
+      if (item.rawCode && existing.storeId) {
+        const mapping = await prisma.storeProductCode.findUnique({
+          where: { storeId_code: { storeId: existing.storeId, code: item.rawCode } },
+        });
+        productId = mapping?.productId ?? null;
+      }
+      return {
+        rawName: item.rawName,
+        rawCode: item.rawCode ?? null,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice ?? null,
+        lineTotal: item.lineTotal,
+        matched: !!productId,
+        productId,
+      };
+    }),
+  );
+
+  const status = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
+
+  // Reparse is a tuning operation: we replace items and parsed metadata
+  // but leave any PriceRecord rows created on the original upload alone.
+  // Recording prices for newly-matched lines happens through /confirm.
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.receiptItem.deleteMany({ where: { receiptId: existing.id } });
+    return tx.receipt.update({
+      where: { id: existing.id },
+      data: {
+        store: parsed.store,
+        parserVersion: parsed.parserVersion,
+        parsedData: parsed as unknown as Prisma.InputJsonValue,
+        status,
+        purchasedAt: parsed.purchasedAt ?? null,
+        subtotal: parsed.subtotal ?? null,
+        tax: parsed.tax ?? null,
+        total: parsed.total ?? null,
+        items: { create: itemsToCreate },
+      },
+      ...receiptWithItems,
+    });
+  });
+
+  return formatReceipt(updated);
+}
+
 export interface ConfirmItemArgs {
   receiptItemId: string;
   productId: string;
