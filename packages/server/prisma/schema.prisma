@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -24,6 +25,7 @@ model User {
   transactions         Transaction[]
   dailyLogs            DailyLog[]
   productServingUnits  ProductServingUnit[]
+  uploadedReceipts     Receipt[]
 }
 
 model Household {
@@ -42,6 +44,7 @@ model Household {
   categories         Category[]
   transactions       Transaction[]
   householdCurrencies HouseholdCurrency[]
+  receipts           Receipt[]
 }
 
 model HouseholdMember {
@@ -90,6 +93,8 @@ model Product {
   recipeIngredients   RecipeIngredient[]
   intakeEntries       IntakeEntry[]
   productServingUnits ProductServingUnit[]
+  receiptItems        ReceiptItem[]
+  storeCodes          StoreProductCode[]
 
   @@index([brandId])
 }
@@ -101,8 +106,10 @@ model Store {
   location    String?
   createdAt   DateTime @default(now())
 
-  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  household    Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   priceRecords PriceRecord[]
+  receipts     Receipt[]
+  productCodes StoreProductCode[]
 
   @@index([householdId])
 }
@@ -351,4 +358,73 @@ model ProductServingUnit {
 
   @@unique([productId, userId, name])
   @@index([productId, userId])
+}
+
+// ==================== Receipts ====================
+
+enum ReceiptStatus {
+  PENDING
+  PARSED
+  REVIEWED
+  FAILED
+}
+
+model Receipt {
+  id            String        @id @default(uuid())
+  householdId   String
+  storeId       String?
+  uploadedById  String
+  store         String
+  parserVersion String?
+  rawText       String
+  parsedData    Json?
+  status        ReceiptStatus @default(PENDING)
+  purchasedAt   DateTime?
+  subtotal      Float?
+  tax           Float?
+  total         Float?
+  currencyCode  String        @default("CAD")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  matchedStore Store?        @relation(fields: [storeId], references: [id])
+  uploadedBy   User          @relation(fields: [uploadedById], references: [id])
+  items        ReceiptItem[]
+
+  @@index([householdId, purchasedAt])
+  @@index([storeId])
+}
+
+model ReceiptItem {
+  id        String   @id @default(uuid())
+  receiptId String
+  productId String?
+  rawName   String
+  rawCode   String?
+  quantity  Float    @default(1)
+  unitPrice Float?
+  lineTotal Float
+  matched   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  receipt Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([receiptId])
+  @@index([productId])
+}
+
+model StoreProductCode {
+  id        String   @id @default(uuid())
+  storeId   String
+  code      String
+  productId String
+  createdAt DateTime @default(now())
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, code])
+  @@index([productId])
 }

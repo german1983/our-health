@@ -11,6 +11,7 @@ import { StoragePage } from '@/features/storage/storage-page';
 import { RecipesPage } from '@/features/recipes/recipes-page';
 import { FinancePage } from '@/features/finance/finance-page';
 import { IntakePage } from '@/features/intake/intake-page';
+import { ReceiptsPage } from '@/features/receipts/receipts-page';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export default function App() {
               <Route path="/recipes" element={<RecipesPage />} />
               <Route path="/finance" element={<FinancePage />} />
               <Route path="/intake" element={<IntakePage />} />
+              <Route path="/receipts" element={<ReceiptsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

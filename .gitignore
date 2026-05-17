@@ -4,6 +4,7 @@ dist/
 *.local
 .vercel
 .turbo
+*.tsbuildinfo
 
 # Prisma
 packages/server/prisma/*.db

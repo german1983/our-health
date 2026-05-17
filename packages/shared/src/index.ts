@@ -108,6 +108,20 @@ export {
   type ConvertCurrencyResponse,
 } from './schemas/currency.js';
 
+// Receipts
+export {
+  receiptStatusEnum,
+  supportedReceiptStores,
+  createReceiptSchema,
+  confirmReceiptItemSchema,
+  type ReceiptStatus,
+  type SupportedReceiptStore,
+  type CreateReceiptInput,
+  type ConfirmReceiptItemInput,
+  type ReceiptItemResponse,
+  type ReceiptResponse,
+} from './schemas/receipt.js';
+
 // Intake
 export {
   mealSlotEnum,
