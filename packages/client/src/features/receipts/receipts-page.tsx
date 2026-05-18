@@ -142,10 +142,19 @@ export function ReceiptsPage() {
           </div>
 
           {submitMutation.error && (
-            <p className="text-sm text-destructive">
-              {(submitMutation.error as { response?: { data?: { error?: string } } })
-                .response?.data?.error || 'Failed to save receipt'}
-            </p>
+            <div className="text-sm text-destructive space-y-1">
+              <p>
+                {(submitMutation.error as { response?: { data?: { error?: string } } })
+                  .response?.data?.error || 'Failed to save receipt'}
+              </p>
+              {(submitMutation.error as {
+                response?: { data?: { details?: { path: string; message: string }[] } };
+              }).response?.data?.details?.map((d, i) => (
+                <p key={i} className="text-xs">
+                  · {d.path}: {d.message}
+                </p>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
