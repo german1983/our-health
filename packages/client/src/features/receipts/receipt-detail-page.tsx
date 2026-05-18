@@ -15,10 +15,14 @@ import type {
 } from '@personal-budget/shared';
 
 const TOLERANCE = 0.011;
+// Tax-from-categories math is fuzzier than subtotal addition: per-item
+// rounding accumulates, the till may compute on the bucket subtotal vs
+// per line, etc. Be a bit more permissive.
+const TAX_TOLERANCE = 0.05;
 
-function near(a: number | null | undefined, b: number | null | undefined): boolean {
+function near(a: number | null | undefined, b: number | null | undefined, tol = TOLERANCE): boolean {
   if (a == null || b == null) return false;
-  return Math.abs(a - b) <= TOLERANCE;
+  return Math.abs(a - b) <= tol;
 }
 
 // Distribute the receipt's printed tax across taxed items proportionally
@@ -78,6 +82,23 @@ export function ReceiptDetailPage() {
     [receipt],
   );
 
+  // What tax would each row contribute given its assigned category? Items
+  // without a category contribute 0; if all items are uncategorized the
+  // check is skipped so users don't see a red banner before they've
+  // touched anything.
+  const expectedTax = useMemo(() => {
+    if (!receipt) return 0;
+    return receipt.items.reduce(
+      (sum, i) => sum + i.lineTotal * (i.taxCategoryRate ?? 0),
+      0,
+    );
+  }, [receipt]);
+
+  const anyCategorized = useMemo(
+    () => receipt?.items.some((i) => i.taxCategoryId != null) ?? false,
+    [receipt],
+  );
+
   const taxShares = useMemo(() => (receipt ? distributeTax(receipt) : new Map()), [receipt]);
 
   const subtotalMatches = near(sumLineTotals, receipt?.subtotal);
@@ -85,7 +106,11 @@ export function ReceiptDetailPage() {
     receipt?.subtotal != null && receipt?.tax != null && receipt?.total != null
       ? near(receipt.subtotal + receipt.tax, receipt.total)
       : false;
-  const allGood = subtotalMatches && totalMatches;
+  const taxMatches =
+    !anyCategorized || receipt?.tax == null
+      ? true
+      : near(expectedTax, receipt.tax, TAX_TOLERANCE);
+  const allGood = subtotalMatches && totalMatches && taxMatches;
 
   if (isLoading) {
     return <div className="text-muted-foreground">Loading…</div>;
@@ -166,6 +191,20 @@ export function ReceiptDetailPage() {
                 <strong>
                   {receipt.total != null ? formatCurrency(receipt.total, receipt.currencyCode) : '—'}
                 </strong>
+              </div>
+            )}
+            {!taxMatches && (
+              <div>
+                · Categories imply{' '}
+                <strong>{formatCurrency(expectedTax, receipt.currencyCode)}</strong> of tax,
+                receipt shows{' '}
+                <strong>
+                  {receipt.tax != null ? formatCurrency(receipt.tax, receipt.currencyCode) : '—'}
+                </strong>
+                {receipt.tax != null && (
+                  <> (Δ {formatCurrency(expectedTax - receipt.tax, receipt.currencyCode)})</>
+                )}
+                . Check the Category column for items that should (or shouldn't) be taxed.
               </div>
             )}
           </div>
