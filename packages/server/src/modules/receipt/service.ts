@@ -59,7 +59,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
     if (!store) throw new NotFoundError('Store');
   }
 
-  const parsed = parseReceipt(opts.rawText, opts.storeHint);
+  const parsed = await parseReceipt(opts.rawText, opts.storeHint);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
@@ -172,7 +172,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   });
   if (!existing) throw new NotFoundError('Receipt');
 
-  const parsed = parseReceipt(existing.rawText, opts.storeHint);
+  const parsed = await parseReceipt(existing.rawText, opts.storeHint);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {

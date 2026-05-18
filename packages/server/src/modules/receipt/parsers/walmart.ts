@@ -31,7 +31,7 @@ export const walmartParser: ReceiptParser = {
     return Math.min(hits / 2, 1);
   },
 
-  parse(text) {
+  async parse(text) {
     const lines = text
       .split('\n')
       .map((l) => l.trim())

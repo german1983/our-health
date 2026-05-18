@@ -19,5 +19,5 @@ export interface ParsedReceipt {
 export interface ReceiptParser {
   storeKey: string;
   detect(text: string): number;
-  parse(text: string): ParsedReceipt;
+  parse(text: string, hint?: string): Promise<ParsedReceipt>;
 }
