@@ -29,6 +29,20 @@
       "when": 1779140176022,
       "tag": "0003_thin_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779141054437,
+      "tag": "0004_rich_star_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779141094075,
+      "tag": "0005_common_xorn",
+      "breakpoints": true
     }
   ]
 }

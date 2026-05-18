@@ -176,7 +176,7 @@ export function ReceiptDetailPage() {
 
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">{receipt.store}</h1>
+          <h1 className="text-3xl font-bold">{receipt.chainName ?? receipt.chainKey ?? 'Unknown'}</h1>
           <p className="text-sm text-muted-foreground">
             <Badge variant={receipt.status === 'PARSED' ? 'default' : locked ? 'secondary' : 'secondary'}>
               {receipt.status}

@@ -1,6 +1,7 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
+  chains,
   chainTaxCodes,
   priceRecords,
   receiptItems,
@@ -19,12 +20,14 @@ import type {
 import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js';
 
 const receiptRelations = {
+  chain: true,
   items: { with: { product: true, taxCategory: true } },
 } as const;
 
 type ReceiptWithItems = {
   id: string;
-  store: string;
+  chainId: string | null;
+  chain: { id: string; key: string; name: string } | null;
   storeId: string | null;
   status: 'PENDING' | 'PARSED' | 'REVIEWED' | 'FAILED';
   purchasedAt: Date | null;
@@ -64,6 +67,12 @@ export interface CreateReceiptOptions {
   userId: string;
 }
 
+async function resolveChainId(key: string | null | undefined): Promise<string | null> {
+  if (!key || key === 'UNKNOWN') return null;
+  const chain = await db.query.chains.findFirst({ where: eq(chains.key, key) });
+  return chain?.id ?? null;
+}
+
 export async function createReceipt(opts: CreateReceiptOptions): Promise<ReceiptResponse> {
   if (opts.storeId) {
     const store = await db.query.stores.findFirst({
@@ -77,6 +86,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
     : `data:image/jpeg;base64,${opts.imageBase64}`;
 
   const { parsed, transcript } = await parseReceiptFromImage(dataUrl, opts.storeHint);
+  const chainId = await resolveChainId(parsed.store);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
@@ -88,9 +98,9 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         productId = mapping?.productId ?? null;
       }
       let taxCategoryId: string | null = null;
-      if (item.taxCode) {
+      if (item.taxCode && chainId) {
         const taxMapping = await db.query.chainTaxCodes.findFirst({
-          where: and(eq(chainTaxCodes.chain, parsed.store), eq(chainTaxCodes.code, item.taxCode)),
+          where: and(eq(chainTaxCodes.chainId, chainId), eq(chainTaxCodes.code, item.taxCode)),
         });
         taxCategoryId = taxMapping?.taxCategoryId ?? null;
       }
@@ -117,7 +127,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         householdId: opts.householdId,
         uploadedById: opts.userId,
         storeId: opts.storeId,
-        store: parsed.store,
+        chainId,
         parserVersion: parsed.parserVersion,
         rawText: transcript,
         parsedData: parsed,
@@ -199,6 +209,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   if (!existing) throw new NotFoundError('Receipt');
 
   const parsed = await parseReceiptFromText(existing.rawText, opts.storeHint);
+  const chainId = await resolveChainId(parsed.store);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
@@ -213,9 +224,9 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
         productId = mapping?.productId ?? null;
       }
       let taxCategoryId: string | null = null;
-      if (item.taxCode) {
+      if (item.taxCode && chainId) {
         const taxMapping = await db.query.chainTaxCodes.findFirst({
-          where: and(eq(chainTaxCodes.chain, parsed.store), eq(chainTaxCodes.code, item.taxCode)),
+          where: and(eq(chainTaxCodes.chainId, chainId), eq(chainTaxCodes.code, item.taxCode)),
         });
         taxCategoryId = taxMapping?.taxCategoryId ?? null;
       }
@@ -242,7 +253,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
     await tx
       .update(receipts)
       .set({
-        store: parsed.store,
+        chainId,
         parserVersion: parsed.parserVersion,
         parsedData: parsed,
         status,
@@ -519,17 +530,23 @@ export async function setItemTaxCategory(args: SetItemTaxCategoryArgs): Promise<
     }
 
     // Optionally persist the mapping so future receipts from this chain
-    // pick up the corrected category automatically.
-    if (args.applyToChain && item.taxCode && args.taxCategoryId) {
+    // pick up the corrected category automatically. Requires the receipt
+    // to be linked to a known chain (chainId resolved at parse time).
+    if (
+      args.applyToChain &&
+      item.taxCode &&
+      args.taxCategoryId &&
+      item.receipt.chainId
+    ) {
       await tx
         .insert(chainTaxCodes)
         .values({
-          chain: item.receipt.store,
+          chainId: item.receipt.chainId,
           code: item.taxCode,
           taxCategoryId: args.taxCategoryId,
         })
         .onConflictDoUpdate({
-          target: [chainTaxCodes.chain, chainTaxCodes.code],
+          target: [chainTaxCodes.chainId, chainTaxCodes.code],
           set: { taxCategoryId: args.taxCategoryId },
         });
     }
@@ -541,7 +558,9 @@ export async function setItemTaxCategory(args: SetItemTaxCategoryArgs): Promise<
 function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
   return {
     id: receipt.id,
-    store: receipt.store,
+    chainId: receipt.chainId,
+    chainKey: receipt.chain?.key ?? null,
+    chainName: receipt.chain?.name ?? null,
     storeId: receipt.storeId,
     status: receipt.status,
     purchasedAt: receipt.purchasedAt?.toISOString() ?? null,

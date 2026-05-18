@@ -82,7 +82,9 @@ export interface ReceiptItemResponse {
 
 export interface ReceiptResponse {
   id: string;
-  store: string;
+  chainId: string | null;
+  chainKey: string | null;
+  chainName: string | null;
   storeId: string | null;
   status: ReceiptStatus;
   purchasedAt: string | null;

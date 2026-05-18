@@ -176,7 +176,7 @@ export function ReceiptsPage() {
               >
                 <div>
                   <div className="font-medium">
-                    {r.store} <Badge variant={r.status === 'PARSED' ? 'default' : 'secondary'}>{r.status}</Badge>
+                    {r.chainName ?? r.chainKey ?? 'Unknown'} <Badge variant={r.status === 'PARSED' ? 'default' : 'secondary'}>{r.status}</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {r.purchasedAt ? formatDate(r.purchasedAt) : formatDate(r.createdAt)} · {r.items.length} items
