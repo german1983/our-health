@@ -88,7 +88,14 @@ export async function deleteSpace(id: string, householdId: string): Promise<void
 
 // ==================== Storage Items ====================
 
-type ItemWithRelations = Awaited<ReturnType<typeof db.query.storageItems.findMany>>[number] & {
+type ItemWithRelations = {
+  id: string;
+  storageSpaceId: string;
+  productId: string;
+  quantity: number;
+  unit: string;
+  addedAt: Date;
+  expiryDate: Date | null;
   product: { name: string; barcode: string | null };
   storageSpace: { name: string; sortOrder: number };
   addedBy: { name: string };
@@ -106,7 +113,7 @@ export async function getSpaceItems(spaceId: string): Promise<StorageItemRespons
     with: itemRelations,
     orderBy: desc(storageItems.addedAt),
   });
-  return items.map(formatItem);
+  return items.map((i) => formatItem(i as unknown as ItemWithRelations));
 }
 
 export async function addItem(
@@ -129,7 +136,7 @@ export async function addItem(
     where: eq(storageItems.id, inserted.id),
     with: itemRelations,
   });
-  return formatItem(item!);
+  return formatItem(item as unknown as ItemWithRelations);
 }
 
 export async function updateItem(
@@ -154,7 +161,7 @@ export async function updateItem(
     with: itemRelations,
   });
   if (!item) throw new NotFoundError('Storage item');
-  return formatItem(item);
+  return formatItem(item as unknown as ItemWithRelations);
 }
 
 export async function removeItem(id: string): Promise<void> {
@@ -162,13 +169,13 @@ export async function removeItem(id: string): Promise<void> {
 }
 
 export async function getFullInventory(householdId: string): Promise<StorageItemResponse[]> {
-  const items = await db.query.storageItems.findMany({
+  const items = (await db.query.storageItems.findMany({
     where: inArray(
       storageItems.storageSpaceId,
       db.select({ id: storageSpaces.id }).from(storageSpaces).where(eq(storageSpaces.householdId, householdId)),
     ),
     with: itemRelations,
-  });
+  })) as unknown as ItemWithRelations[];
 
   items.sort((a, b) => {
     const diff = a.storageSpace.sortOrder - b.storageSpace.sortOrder;
