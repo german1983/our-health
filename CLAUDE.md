@@ -11,12 +11,12 @@ Full-stack **Personal Budget & Grocery Management** app for households. Tracks g
 ```
 packages/
   shared/    Zod schemas & TypeScript types (must build first)
-  server/    Express 4 REST API + Prisma 6 + PostgreSQL
+  server/    Express 4 REST API + Drizzle ORM + PostgreSQL (Neon)
   client/    React 18 + Vite 6 + Tailwind CSS 4
 ```
 
 ### Server Pattern
-`routes.ts` → `service.ts` → Prisma ORM. Each feature module lives in `packages/server/src/modules/<feature>/`.
+`routes.ts` → `service.ts` → Drizzle ORM (Neon serverless driver). Each feature module lives in `packages/server/src/modules/<feature>/`. Schema and DB client live in `packages/server/src/db/` and `packages/server/src/lib/db.ts`.
 
 ### Client Pattern
 Feature pages in `src/features/<feature>/`, shared UI components in `src/components/ui/`, auth via React Context, server state via TanStack Query.
@@ -30,19 +30,20 @@ npm run dev:server       # Express (tsx watch, port 3001)
 npm run dev:client       # Vite (port 5173, proxies /api → 3001)
 npm run build:shared     # Build shared types (MUST run first)
 
-# Database
-npx -w packages/server prisma generate   # Generate Prisma client
-npx -w packages/server prisma db push    # Push schema to DB
-npx -w packages/server prisma migrate dev # Create migration
-npm run db:seed                           # Seed database
+# Database (Drizzle)
+npm run db:generate      # Generate migration SQL from src/db/schema.ts
+npm run db:push          # Push schema directly (dev only, no migration file)
+npm run db:migrate       # Apply pending migrations from packages/server/drizzle/
+npm run db:studio        # Launch Drizzle Studio (DB browser)
+npm run db:seed          # Seed database (src/db/seed.ts)
 ```
 
 ## Tech Stack
 
 | Layer | Tech |
 |-------|------|
-| Client | React 18, Vite 6, React Router 6, TanStack Query 5, Tailwind CSS 4, Recharts, html5-qrcode |
-| Server | Express 4, Prisma 6, PostgreSQL (Neon), JWT, bcryptjs |
+| Client | React 18, Vite 6, React Router 6, TanStack Query 5, Tailwind CSS 4, Recharts, html5-qrcode, tesseract.js (client-side OCR) |
+| Server | Express 4, Drizzle ORM, @neondatabase/serverless (WebSocket), JWT, bcryptjs |
 | Shared | Zod 3, TypeScript 5.5 |
 
 ## Key Patterns & Conventions
@@ -94,7 +95,10 @@ See `.env.example` for the full list. Key variables:
 
 - **Express types**: Using `@types/express@4` (v5 changes `req.params` types)
 - **JWT types**: `expiresIn` needs casting as `jwt.SignOptions['expiresIn']`
-- **Prisma relations**: Both sides of every relation must be defined
+- **Drizzle relations**: Define `relations()` on every relation you want to use via `db.query.X.findX({ with: ... })`. Self-referential FKs (e.g. `Category.parentId`) need the explicit `AnyPgColumn` cast in the `references()` callback.
+- **Drizzle column names**: DB columns are snake_case; TS field names are camelCase. Always pass the JS object property to `eq()`/`.set()` etc. — Drizzle handles the mapping.
+- **Migrations**: SQL files live in `packages/server/drizzle/`. Generate with `npm run db:generate`; apply with `npm run db:migrate`.
 - **Tailwind CSS v4**: Uses `@import "tailwindcss"` and `@theme {}` blocks (no tailwind.config.js)
 - **Shared package**: Must be built (`npm run build:shared`) before server/client can import from it
 - **Client path alias**: `@/*` maps to `./src/*`
+- **Receipt OCR**: Tesseract.js runs in the browser; the server only stores the extracted text and parses it (see `packages/server/src/modules/receipt/parsers/`).

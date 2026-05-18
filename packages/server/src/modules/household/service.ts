@@ -1,27 +1,34 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, isNotNull } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { households, householdMembers, householdCurrencies } from '../../db/schema.js';
 import { NotFoundError, ConflictError, ForbiddenError } from '../../lib/errors.js';
 import type { CreateHouseholdInput, HouseholdDetailResponse, HouseholdMemberResponse } from '@personal-budget/shared';
 
 export async function createHousehold(input: CreateHouseholdInput, userId: string) {
-  const household = await prisma.household.create({
-    data: {
-      name: input.name,
-      defaultCurrency: input.defaultCurrency,
-      createdById: userId,
-      members: {
-        create: {
-          userId,
-          role: 'OWNER',
-          acceptedAt: new Date(),
-        },
-      },
-      householdCurrencies: {
-        create: {
-          currencyCode: input.defaultCurrency,
-          isDefault: true,
-        },
-      },
-    },
+  const household = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(households)
+      .values({
+        name: input.name,
+        defaultCurrency: input.defaultCurrency,
+        createdById: userId,
+      })
+      .returning();
+
+    await tx.insert(householdMembers).values({
+      householdId: created.id,
+      userId,
+      role: 'OWNER',
+      acceptedAt: new Date(),
+    });
+
+    await tx.insert(householdCurrencies).values({
+      householdId: created.id,
+      currencyCode: input.defaultCurrency,
+      isDefault: true,
+    });
+
+    return created;
   });
 
   return {
@@ -33,12 +40,12 @@ export async function createHousehold(input: CreateHouseholdInput, userId: strin
 }
 
 export async function getHousehold(householdId: string): Promise<HouseholdDetailResponse> {
-  const household = await prisma.household.findUnique({
-    where: { id: householdId },
-    include: {
+  const household = await db.query.households.findFirst({
+    where: eq(households.id, householdId),
+    with: {
       members: {
-        include: { user: true },
-        where: { acceptedAt: { not: null } },
+        where: (m, { isNotNull }) => isNotNull(m.acceptedAt),
+        with: { user: true },
       },
     },
   });
@@ -61,38 +68,31 @@ export async function getHousehold(householdId: string): Promise<HouseholdDetail
 }
 
 export async function getInviteCode(householdId: string, userId: string): Promise<string> {
-  const membership = await prisma.householdMember.findUnique({
-    where: { householdId_userId: { householdId, userId } },
+  const membership = await db.query.householdMembers.findFirst({
+    where: and(eq(householdMembers.householdId, householdId), eq(householdMembers.userId, userId)),
   });
-
   if (!membership || membership.role !== 'OWNER') {
     throw new ForbiddenError('Only owners can generate invite codes');
   }
 
-  const household = await prisma.household.findUnique({ where: { id: householdId } });
+  const household = await db.query.households.findFirst({ where: eq(households.id, householdId) });
   return household!.inviteCode;
 }
 
 export async function joinHousehold(code: string, userId: string) {
-  const household = await prisma.household.findUnique({
-    where: { inviteCode: code },
-  });
-
+  const household = await db.query.households.findFirst({ where: eq(households.inviteCode, code) });
   if (!household) throw new NotFoundError('Invalid invite code');
 
-  const existing = await prisma.householdMember.findUnique({
-    where: { householdId_userId: { householdId: household.id, userId } },
+  const existing = await db.query.householdMembers.findFirst({
+    where: and(eq(householdMembers.householdId, household.id), eq(householdMembers.userId, userId)),
   });
-
   if (existing) throw new ConflictError('Already a member of this household');
 
-  await prisma.householdMember.create({
-    data: {
-      householdId: household.id,
-      userId,
-      role: 'MEMBER',
-      acceptedAt: new Date(),
-    },
+  await db.insert(householdMembers).values({
+    householdId: household.id,
+    userId,
+    role: 'MEMBER',
+    acceptedAt: new Date(),
   });
 
   return {
@@ -104,9 +104,12 @@ export async function joinHousehold(code: string, userId: string) {
 }
 
 export async function getMembers(householdId: string): Promise<HouseholdMemberResponse[]> {
-  const members = await prisma.householdMember.findMany({
-    where: { householdId, acceptedAt: { not: null } },
-    include: { user: true },
+  const members = await db.query.householdMembers.findMany({
+    where: and(
+      eq(householdMembers.householdId, householdId),
+      isNotNull(householdMembers.acceptedAt),
+    ),
+    with: { user: true },
   });
 
   return members.map((m) => ({

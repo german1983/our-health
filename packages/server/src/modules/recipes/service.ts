@@ -1,4 +1,6 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, gt, desc, inArray } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { recipes, recipeIngredients, storageItems, storageSpaces } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import type {
   CreateRecipeInput,
@@ -9,35 +11,58 @@ import type {
   RecipeSuggestionResponse,
 } from '@personal-budget/shared';
 
-export async function getRecipes(householdId: string): Promise<RecipeResponse[]> {
-  const recipes = await prisma.recipe.findMany({
-    where: { householdId },
-    include: { createdBy: true },
-    orderBy: { createdAt: 'desc' },
-  });
+type RecipeWithRelations = {
+  id: string;
+  name: string;
+  description: string | null;
+  servings: number;
+  servingUnit: string | null;
+  servingWeightGrams: number | null;
+  prepTime: number | null;
+  cookTime: number | null;
+  imageUrl: string | null;
+  source: 'USER' | 'EXTERNAL';
+  createdById: string;
+  createdAt: Date;
+  createdBy: { name: string };
+  ingredients?: {
+    id: string;
+    productId: string;
+    quantity: number;
+    unit: string;
+    notes: string | null;
+    product: { name: string; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams: number };
+  }[];
+};
 
-  return recipes.map(formatRecipe);
+export async function getRecipes(householdId: string): Promise<RecipeResponse[]> {
+  const result = await db.query.recipes.findMany({
+    where: eq(recipes.householdId, householdId),
+    with: { createdBy: true },
+    orderBy: desc(recipes.createdAt),
+  });
+  return result.map(formatRecipe);
 }
 
 export async function getRecipe(id: string, householdId: string): Promise<RecipeDetailResponse> {
-  const recipe = await prisma.recipe.findFirst({
-    where: { id, householdId },
-    include: {
+  const recipe = await db.query.recipes.findFirst({
+    where: and(eq(recipes.id, id), eq(recipes.householdId, householdId)),
+    with: {
       createdBy: true,
-      ingredients: { include: { product: true } },
+      ingredients: { with: { product: true } },
     },
   });
 
   if (!recipe) throw new NotFoundError('Recipe');
 
-  const ingredients = recipe.ingredients.map((ing) => ({
+  const ingredients = (recipe.ingredients ?? []).map((ing) => ({
     id: ing.id,
     productId: ing.productId,
     productName: ing.product.name,
     quantity: ing.quantity,
     unit: ing.unit,
     notes: ing.notes,
-    nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
+    nutritionalFacts: ing.product.nutritionalFacts,
     nutritionBaseGrams: ing.product.nutritionBaseGrams,
   }));
 
@@ -52,54 +77,43 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
   };
 }
 
-export async function createRecipe(input: CreateRecipeInput, householdId: string, userId: string): Promise<RecipeDetailResponse> {
-  const recipe = await prisma.recipe.create({
-    data: {
-      householdId,
-      name: input.name,
-      description: input.description,
-      servings: input.servings,
-      servingUnit: input.servingUnit,
-      servingWeightGrams: input.servingWeightGrams,
-      prepTime: input.prepTime,
-      cookTime: input.cookTime,
-      imageUrl: input.imageUrl,
-      createdById: userId,
-      ingredients: {
-        create: input.ingredients.map((ing) => ({
+export async function createRecipe(
+  input: CreateRecipeInput,
+  householdId: string,
+  userId: string,
+): Promise<RecipeDetailResponse> {
+  const recipeId = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(recipes)
+      .values({
+        householdId,
+        name: input.name,
+        description: input.description,
+        servings: input.servings,
+        servingUnit: input.servingUnit,
+        servingWeightGrams: input.servingWeightGrams,
+        prepTime: input.prepTime,
+        cookTime: input.cookTime,
+        imageUrl: input.imageUrl,
+        createdById: userId,
+      })
+      .returning({ id: recipes.id });
+
+    if (input.ingredients.length > 0) {
+      await tx.insert(recipeIngredients).values(
+        input.ingredients.map((ing) => ({
+          recipeId: created.id,
           productId: ing.productId,
           quantity: ing.quantity,
           unit: ing.unit,
           notes: ing.notes,
         })),
-      },
-    },
-    include: {
-      createdBy: true,
-      ingredients: { include: { product: true } },
-    },
+      );
+    }
+    return created.id;
   });
 
-  const ingredients = recipe.ingredients.map((ing) => ({
-    id: ing.id,
-    productId: ing.productId,
-    productName: ing.product.name,
-    quantity: ing.quantity,
-    unit: ing.unit,
-    notes: ing.notes,
-    nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
-    nutritionBaseGrams: ing.product.nutritionBaseGrams,
-  }));
-
-  const totalNutrition = calculateTotalNutrition(ingredients);
-  const perServingNutrition = divideNutrition(totalNutrition, recipe.servings);
-
-  return {
-    ...formatRecipe(recipe),
-    ingredients,
-    totalNutrition,
-    perServingNutrition,
-  };
+  return getRecipe(recipeId, householdId);
 }
 
 export async function updateRecipe(
@@ -107,85 +121,66 @@ export async function updateRecipe(
   input: UpdateRecipeInput,
   householdId: string,
 ): Promise<RecipeDetailResponse> {
-  const existing = await prisma.recipe.findFirst({ where: { id, householdId } });
+  const existing = await db.query.recipes.findFirst({
+    where: and(eq(recipes.id, id), eq(recipes.householdId, householdId)),
+  });
   if (!existing) throw new NotFoundError('Recipe');
 
-  // If ingredients are provided, replace them all
-  if (input.ingredients) {
-    await prisma.recipeIngredient.deleteMany({ where: { recipeId: id } });
-    await prisma.recipeIngredient.createMany({
-      data: input.ingredients.map((ing) => ({
-        recipeId: id,
-        productId: ing.productId,
-        quantity: ing.quantity,
-        unit: ing.unit,
-        notes: ing.notes,
-      })),
-    });
-  }
+  await db.transaction(async (tx) => {
+    if (input.ingredients) {
+      await tx.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
+      if (input.ingredients.length > 0) {
+        await tx.insert(recipeIngredients).values(
+          input.ingredients.map((ing) => ({
+            recipeId: id,
+            productId: ing.productId,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            notes: ing.notes,
+          })),
+        );
+      }
+    }
 
-  const { ingredients: _, ...recipeData } = input;
-  const recipe = await prisma.recipe.update({
-    where: { id },
-    data: recipeData,
-    include: {
-      createdBy: true,
-      ingredients: { include: { product: true } },
-    },
+    const { ingredients: _ignored, ...recipeData } = input;
+    if (Object.keys(recipeData).length > 0) {
+      await tx.update(recipes).set(recipeData).where(eq(recipes.id, id));
+    }
   });
 
-  const formattedIngredients = recipe.ingredients.map((ing) => ({
-    id: ing.id,
-    productId: ing.productId,
-    productName: ing.product.name,
-    quantity: ing.quantity,
-    unit: ing.unit,
-    notes: ing.notes,
-    nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
-  }));
-
-  const totalNutrition = calculateTotalNutrition(formattedIngredients);
-  const perServingNutrition = divideNutrition(totalNutrition, recipe.servings);
-
-  return {
-    ...formatRecipe(recipe),
-    ingredients: formattedIngredients,
-    totalNutrition,
-    perServingNutrition,
-  };
+  return getRecipe(id, householdId);
 }
 
 export async function deleteRecipe(id: string, householdId: string): Promise<void> {
-  const recipe = await prisma.recipe.findFirst({ where: { id, householdId } });
+  const recipe = await db.query.recipes.findFirst({
+    where: and(eq(recipes.id, id), eq(recipes.householdId, householdId)),
+  });
   if (!recipe) throw new NotFoundError('Recipe');
-  await prisma.recipe.delete({ where: { id } });
+  await db.delete(recipes).where(eq(recipes.id, id));
 }
 
 export async function getSuggestions(householdId: string): Promise<RecipeSuggestionResponse[]> {
-  // Get current inventory (products with quantity > 0)
-  const inventoryItems = await prisma.storageItem.findMany({
-    where: {
-      storageSpace: { householdId },
-      quantity: { gt: 0 },
-    },
-    select: { productId: true },
-  });
+  const inventoryRows = await db
+    .select({ productId: storageItems.productId })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .where(and(eq(storageSpaces.householdId, householdId), gt(storageItems.quantity, 0)));
 
-  const inventoryProductIds = new Set(inventoryItems.map((i) => i.productId));
+  const inventoryProductIds = new Set(inventoryRows.map((r) => r.productId));
 
-  // Get all recipes with their ingredients
-  const recipes = await prisma.recipe.findMany({
-    where: { householdId },
-    include: {
+  const all = await db.query.recipes.findMany({
+    where: eq(recipes.householdId, householdId),
+    with: {
       createdBy: true,
-      ingredients: { include: { product: true } },
+      ingredients: { with: { product: true } },
     },
   });
 
-  const suggestions: RecipeSuggestionResponse[] = recipes.map((recipe) => {
-    const totalIngredients = recipe.ingredients.length;
-    const available = recipe.ingredients.filter((ing) => inventoryProductIds.has(ing.productId));
-    const missing = recipe.ingredients
+  const suggestions: RecipeSuggestionResponse[] = all.map((recipe) => {
+    const ings = recipe.ingredients ?? [];
+    const totalIngredients = ings.length;
+    const available = ings.filter((ing) => inventoryProductIds.has(ing.productId));
+    const missing = ings
       .filter((ing) => !inventoryProductIds.has(ing.productId))
       .map((ing) => ({
         productId: ing.productId,
@@ -205,7 +200,6 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
     };
   });
 
-  // Sort: 100% match first, then by score descending
   return suggestions.sort((a, b) => b.matchScore - a.matchScore);
 }
 
@@ -271,21 +265,7 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
   };
 }
 
-function formatRecipe(recipe: {
-  id: string;
-  name: string;
-  description: string | null;
-  servings: number;
-  servingUnit: string | null;
-  servingWeightGrams: number | null;
-  prepTime: number | null;
-  cookTime: number | null;
-  imageUrl: string | null;
-  source: string;
-  createdById: string;
-  createdBy: { name: string };
-  createdAt: Date;
-}): RecipeResponse {
+function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
   return {
     id: recipe.id,
     name: recipe.name,
@@ -296,7 +276,7 @@ function formatRecipe(recipe: {
     prepTime: recipe.prepTime,
     cookTime: recipe.cookTime,
     imageUrl: recipe.imageUrl,
-    source: recipe.source as 'USER' | 'EXTERNAL',
+    source: recipe.source,
     createdBy: recipe.createdBy.name,
     createdAt: recipe.createdAt.toISOString(),
   };

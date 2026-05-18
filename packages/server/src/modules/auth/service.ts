@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { prisma } from '../../lib/prisma.js';
+import { eq } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { users } from '../../db/schema.js';
 import { ConflictError, UnauthorizedError } from '../../lib/errors.js';
 import type { RegisterInput, LoginInput, AuthResponse, AuthTokens } from '@personal-budget/shared';
 
@@ -15,21 +17,14 @@ function generateTokens(userId: string): AuthTokens {
 }
 
 export async function register(input: RegisterInput): Promise<AuthResponse> {
-  const existing = await prisma.user.findUnique({ where: { email: input.email } });
-  if (existing) {
-    throw new ConflictError('Email already registered');
-  }
+  const existing = await db.query.users.findFirst({ where: eq(users.email, input.email) });
+  if (existing) throw new ConflictError('Email already registered');
 
   const passwordHash = await bcrypt.hash(input.password, 12);
-  const user = await prisma.user.create({
-    data: {
-      email: input.email,
-      passwordHash,
-      name: input.name,
-    },
-  });
-
-  const tokens = generateTokens(user.id);
+  const [user] = await db
+    .insert(users)
+    .values({ email: input.email, passwordHash, name: input.name })
+    .returning();
 
   return {
     user: {
@@ -38,22 +33,16 @@ export async function register(input: RegisterInput): Promise<AuthResponse> {
       name: user.name,
       createdAt: user.createdAt.toISOString(),
     },
-    tokens,
+    tokens: generateTokens(user.id),
   };
 }
 
 export async function login(input: LoginInput): Promise<AuthResponse> {
-  const user = await prisma.user.findUnique({ where: { email: input.email } });
-  if (!user) {
-    throw new UnauthorizedError('Invalid email or password');
-  }
+  const user = await db.query.users.findFirst({ where: eq(users.email, input.email) });
+  if (!user) throw new UnauthorizedError('Invalid email or password');
 
   const valid = await bcrypt.compare(input.password, user.passwordHash);
-  if (!valid) {
-    throw new UnauthorizedError('Invalid email or password');
-  }
-
-  const tokens = generateTokens(user.id);
+  if (!valid) throw new UnauthorizedError('Invalid email or password');
 
   return {
     user: {
@@ -62,7 +51,7 @@ export async function login(input: LoginInput): Promise<AuthResponse> {
       name: user.name,
       createdAt: user.createdAt.toISOString(),
     },
-    tokens,
+    tokens: generateTokens(user.id),
   };
 }
 
@@ -76,7 +65,7 @@ export function refreshToken(token: string): AuthTokens {
 }
 
 export async function getProfile(userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (!user) throw new UnauthorizedError('User not found');
   return {
     id: user.id,

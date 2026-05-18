@@ -1,5 +1,7 @@
-import { prisma } from '../../lib/prisma.js';
-import { NotFoundError, ForbiddenError, ValidationError } from '../../lib/errors.js';
+import { and, eq, gte, lte, asc } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { dailyLogs, intakeEntries, productServingUnits } from '../../db/schema.js';
+import { NotFoundError, ForbiddenError } from '../../lib/errors.js';
 import type {
   NutritionalFacts,
   CreateIntakeEntryInput,
@@ -23,27 +25,47 @@ const ALL_MEAL_SLOTS: MealSlot[] = [
   'EVENING_SNACK',
 ];
 
+const entryRelations = {
+  product: true,
+  recipe: { with: { ingredients: { with: { product: true } } } },
+  servingUnit: true,
+} as const;
+
+type EntryWithRelations = {
+  id: string;
+  mealSlot: MealSlot;
+  productId: string | null;
+  product: { name: string; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams: number } | null;
+  recipeId: string | null;
+  recipe: {
+    name: string;
+    servings: number;
+    ingredients: { quantity: number; product: { nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams: number } }[];
+  } | null;
+  quantity: number;
+  servingUnitId: string | null;
+  servingUnit: { name: string; gramsEquivalent: number } | null;
+  notes: string | null;
+  sortOrder: number;
+};
+
 // ==================== Daily Log ====================
 
-export async function getDailyLog(userId: string, date: string): Promise<DailyLogResponse> {
-  const dateObj = new Date(date + 'T00:00:00.000Z');
+export async function getDailyLog(userId: string, dateStr: string): Promise<DailyLogResponse> {
+  const dateObj = new Date(dateStr + 'T00:00:00.000Z');
 
-  const log = await prisma.dailyLog.findUnique({
-    where: { userId_date: { userId, date: dateObj } },
-    include: {
+  const log = await db.query.dailyLogs.findFirst({
+    where: and(eq(dailyLogs.userId, userId), eq(dailyLogs.date, dateObj)),
+    with: {
       entries: {
-        include: {
-          product: true,
-          recipe: { include: { ingredients: { include: { product: true } } } },
-          servingUnit: true,
-        },
-        orderBy: { sortOrder: 'asc' },
+        with: entryRelations,
+        orderBy: asc(intakeEntries.sortOrder),
       },
     },
   });
 
   const entries = log?.entries ?? [];
-  const formattedEntries = entries.map(formatEntry);
+  const formattedEntries = entries.map((e) => formatEntry(e as EntryWithRelations));
 
   const meals: MealGroup[] = ALL_MEAL_SLOTS.map((slot) => {
     const slotEntries = formattedEntries.filter((e) => e.mealSlot === slot);
@@ -56,7 +78,7 @@ export async function getDailyLog(userId: string, date: string): Promise<DailyLo
 
   return {
     id: log?.id ?? null,
-    date,
+    date: dateStr,
     notes: log?.notes ?? null,
     meals,
     totalNutrition: sumNutrition(formattedEntries.map((e) => e.nutrition)),
@@ -69,20 +91,25 @@ export async function createEntry(userId: string, input: CreateIntakeEntryInput)
   const dateObj = new Date(input.date + 'T00:00:00.000Z');
 
   // Upsert daily log
-  const log = await prisma.dailyLog.upsert({
-    where: { userId_date: { userId, date: dateObj } },
-    create: { userId, date: dateObj },
-    update: {},
-  });
+  const [log] = await db
+    .insert(dailyLogs)
+    .values({ userId, date: dateObj })
+    .onConflictDoUpdate({
+      target: [dailyLogs.userId, dailyLogs.date],
+      set: { userId },
+    })
+    .returning({ id: dailyLogs.id });
 
-  // Validate serving unit ownership if provided
   if (input.servingUnitId) {
-    const unit = await prisma.productServingUnit.findUnique({ where: { id: input.servingUnitId } });
+    const unit = await db.query.productServingUnits.findFirst({
+      where: eq(productServingUnits.id, input.servingUnitId),
+    });
     if (!unit || unit.userId !== userId) throw new NotFoundError('Serving unit');
   }
 
-  const entry = await prisma.intakeEntry.create({
-    data: {
+  const [inserted] = await db
+    .insert(intakeEntries)
+    .values({
       dailyLogId: log.id,
       mealSlot: input.mealSlot,
       productId: input.productId,
@@ -90,69 +117,70 @@ export async function createEntry(userId: string, input: CreateIntakeEntryInput)
       quantity: input.quantity,
       servingUnitId: input.servingUnitId,
       notes: input.notes,
-    },
-    include: {
-      product: true,
-      recipe: { include: { ingredients: { include: { product: true } } } },
-      servingUnit: true,
-    },
-  });
+    })
+    .returning({ id: intakeEntries.id });
 
-  return formatEntry(entry);
+  const entry = await db.query.intakeEntries.findFirst({
+    where: eq(intakeEntries.id, inserted.id),
+    with: entryRelations,
+  });
+  return formatEntry(entry as unknown as EntryWithRelations);
 }
 
-export async function updateEntry(entryId: string, userId: string, input: UpdateIntakeEntryInput): Promise<IntakeEntryResponse> {
-  const entry = await prisma.intakeEntry.findUnique({
-    where: { id: entryId },
-    include: { dailyLog: true },
+export async function updateEntry(
+  entryId: string,
+  userId: string,
+  input: UpdateIntakeEntryInput,
+): Promise<IntakeEntryResponse> {
+  const existing = await db.query.intakeEntries.findFirst({
+    where: eq(intakeEntries.id, entryId),
+    with: { dailyLog: true },
   });
-
-  if (!entry) throw new NotFoundError('Intake entry');
-  if (entry.dailyLog.userId !== userId) throw new ForbiddenError();
+  if (!existing) throw new NotFoundError('Intake entry');
+  if (existing.dailyLog.userId !== userId) throw new ForbiddenError();
 
   if (input.servingUnitId) {
-    const unit = await prisma.productServingUnit.findUnique({ where: { id: input.servingUnitId } });
+    const unit = await db.query.productServingUnits.findFirst({
+      where: eq(productServingUnits.id, input.servingUnitId),
+    });
     if (!unit || unit.userId !== userId) throw new NotFoundError('Serving unit');
   }
 
-  const updated = await prisma.intakeEntry.update({
-    where: { id: entryId },
-    data: {
+  await db
+    .update(intakeEntries)
+    .set({
       mealSlot: input.mealSlot,
       quantity: input.quantity,
       servingUnitId: input.servingUnitId,
       notes: input.notes,
-    },
-    include: {
-      product: true,
-      recipe: { include: { ingredients: { include: { product: true } } } },
-      servingUnit: true,
-    },
-  });
+    })
+    .where(eq(intakeEntries.id, entryId));
 
-  return formatEntry(updated);
+  const entry = await db.query.intakeEntries.findFirst({
+    where: eq(intakeEntries.id, entryId),
+    with: entryRelations,
+  });
+  return formatEntry(entry as unknown as EntryWithRelations);
 }
 
 export async function deleteEntry(entryId: string, userId: string): Promise<void> {
-  const entry = await prisma.intakeEntry.findUnique({
-    where: { id: entryId },
-    include: { dailyLog: true },
+  const existing = await db.query.intakeEntries.findFirst({
+    where: eq(intakeEntries.id, entryId),
+    with: { dailyLog: true },
   });
+  if (!existing) throw new NotFoundError('Intake entry');
+  if (existing.dailyLog.userId !== userId) throw new ForbiddenError();
 
-  if (!entry) throw new NotFoundError('Intake entry');
-  if (entry.dailyLog.userId !== userId) throw new ForbiddenError();
-
-  await prisma.intakeEntry.delete({ where: { id: entryId } });
+  await db.delete(intakeEntries).where(eq(intakeEntries.id, entryId));
 }
 
 // ==================== Serving Units ====================
 
 export async function getServingUnits(userId: string, productId: string): Promise<ServingUnitResponse[]> {
-  const units = await prisma.productServingUnit.findMany({
-    where: { userId, productId },
-    orderBy: { name: 'asc' },
+  const units = await db.query.productServingUnits.findMany({
+    where: and(eq(productServingUnits.userId, userId), eq(productServingUnits.productId, productId)),
+    orderBy: asc(productServingUnits.name),
   });
-
   return units.map((u) => ({
     id: u.id,
     productId: u.productId,
@@ -161,16 +189,19 @@ export async function getServingUnits(userId: string, productId: string): Promis
   }));
 }
 
-export async function createServingUnit(userId: string, input: CreateServingUnitInput): Promise<ServingUnitResponse> {
-  const unit = await prisma.productServingUnit.create({
-    data: {
+export async function createServingUnit(
+  userId: string,
+  input: CreateServingUnitInput,
+): Promise<ServingUnitResponse> {
+  const [unit] = await db
+    .insert(productServingUnits)
+    .values({
       productId: input.productId,
       userId,
       name: input.name,
       gramsEquivalent: input.gramsEquivalent,
-    },
-  });
-
+    })
+    .returning();
   return {
     id: unit.id,
     productId: unit.productId,
@@ -179,16 +210,22 @@ export async function createServingUnit(userId: string, input: CreateServingUnit
   };
 }
 
-export async function updateServingUnit(id: string, userId: string, input: UpdateServingUnitInput): Promise<ServingUnitResponse> {
-  const existing = await prisma.productServingUnit.findUnique({ where: { id } });
+export async function updateServingUnit(
+  id: string,
+  userId: string,
+  input: UpdateServingUnitInput,
+): Promise<ServingUnitResponse> {
+  const existing = await db.query.productServingUnits.findFirst({
+    where: eq(productServingUnits.id, id),
+  });
   if (!existing) throw new NotFoundError('Serving unit');
   if (existing.userId !== userId) throw new ForbiddenError();
 
-  const unit = await prisma.productServingUnit.update({
-    where: { id },
-    data: input,
-  });
-
+  const [unit] = await db
+    .update(productServingUnits)
+    .set(input)
+    .where(eq(productServingUnits.id, id))
+    .returning();
   return {
     id: unit.id,
     productId: unit.productId,
@@ -198,38 +235,32 @@ export async function updateServingUnit(id: string, userId: string, input: Updat
 }
 
 export async function deleteServingUnit(id: string, userId: string): Promise<void> {
-  const existing = await prisma.productServingUnit.findUnique({ where: { id } });
+  const existing = await db.query.productServingUnits.findFirst({
+    where: eq(productServingUnits.id, id),
+  });
   if (!existing) throw new NotFoundError('Serving unit');
   if (existing.userId !== userId) throw new ForbiddenError();
-
-  await prisma.productServingUnit.delete({ where: { id } });
+  await db.delete(productServingUnits).where(eq(productServingUnits.id, id));
 }
 
 // ==================== Summary ====================
 
-export async function getSummary(userId: string, from: string, to: string): Promise<IntakeSummaryResponse[]> {
+export async function getSummary(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<IntakeSummaryResponse[]> {
   const fromDate = new Date(from + 'T00:00:00.000Z');
   const toDate = new Date(to + 'T00:00:00.000Z');
 
-  const logs = await prisma.dailyLog.findMany({
-    where: {
-      userId,
-      date: { gte: fromDate, lte: toDate },
-    },
-    include: {
-      entries: {
-        include: {
-          product: true,
-          recipe: { include: { ingredients: { include: { product: true } } } },
-          servingUnit: true,
-        },
-      },
-    },
-    orderBy: { date: 'asc' },
+  const logs = await db.query.dailyLogs.findMany({
+    where: and(eq(dailyLogs.userId, userId), gte(dailyLogs.date, fromDate), lte(dailyLogs.date, toDate)),
+    with: { entries: { with: entryRelations } },
+    orderBy: asc(dailyLogs.date),
   });
 
   return logs.map((log) => {
-    const entries = log.entries.map(formatEntry);
+    const entries = log.entries.map((e) => formatEntry(e as unknown as EntryWithRelations));
     return {
       date: log.date.toISOString().split('T')[0],
       totalNutrition: sumNutrition(entries.map((e) => e.nutrition)),
@@ -239,25 +270,18 @@ export async function getSummary(userId: string, from: string, to: string): Prom
 
 // ==================== Helpers ====================
 
-function calculateEntryNutrition(entry: {
-  product: { nutritionalFacts: unknown; nutritionBaseGrams: number } | null;
-  recipe: { servings: number; ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[] } | null;
-  quantity: number;
-  servingUnit: { gramsEquivalent: number } | null;
-}): { calculatedGrams: number | null; nutrition: NutritionalFacts | null } {
-  // Recipe-based entry: quantity = number of servings
+function calculateEntryNutrition(entry: EntryWithRelations): {
+  calculatedGrams: number | null;
+  nutrition: NutritionalFacts | null;
+} {
   if (entry.recipe) {
     const totalNutrition = calculateRecipeTotalNutrition(entry.recipe.ingredients);
     const perServing = divideNutrition(totalNutrition, entry.recipe.servings);
-    return {
-      calculatedGrams: null,
-      nutrition: multiplyNutrition(perServing, entry.quantity),
-    };
+    return { calculatedGrams: null, nutrition: multiplyNutrition(perServing, entry.quantity) };
   }
 
-  // Product-based entry
   if (entry.product) {
-    const nf = entry.product.nutritionalFacts as NutritionalFacts | null;
+    const nf = entry.product.nutritionalFacts;
     if (!nf) return { calculatedGrams: null, nutrition: null };
 
     const baseGrams = entry.product.nutritionBaseGrams || 100;
@@ -285,12 +309,11 @@ function calculateEntryNutrition(entry: {
 }
 
 function calculateRecipeTotalNutrition(
-  ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[],
+  ingredients: { quantity: number; product: { nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams: number } }[],
 ): NutritionalFacts {
   const total: NutritionalFacts = { calories: 0, fat: 0, saturatedFat: 0, carbs: 0, sugars: 0, fiber: 0, protein: 0, salt: 0 };
-
   for (const ing of ingredients) {
-    const nf = ing.product.nutritionalFacts as NutritionalFacts | null;
+    const nf = ing.product.nutritionalFacts;
     if (!nf) continue;
     const baseGrams = ing.product.nutritionBaseGrams || 100;
     const factor = ing.quantity / baseGrams;
@@ -303,7 +326,6 @@ function calculateRecipeTotalNutrition(
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0) * factor;
     total.salt = (total.salt ?? 0) + (nf.salt ?? 0) * factor;
   }
-
   return roundNutrition(total);
 }
 
@@ -336,7 +358,6 @@ function multiplyNutrition(nf: NutritionalFacts, factor: number): NutritionalFac
 
 function sumNutrition(items: (NutritionalFacts | null)[]): NutritionalFacts {
   const total: NutritionalFacts = { calories: 0, fat: 0, saturatedFat: 0, carbs: 0, sugars: 0, fiber: 0, protein: 0, salt: 0 };
-
   for (const nf of items) {
     if (!nf) continue;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0);
@@ -348,7 +369,6 @@ function sumNutrition(items: (NutritionalFacts | null)[]): NutritionalFacts {
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0);
     total.salt = (total.salt ?? 0) + (nf.salt ?? 0);
   }
-
   return roundNutrition(total);
 }
 
@@ -366,24 +386,11 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
   };
 }
 
-function formatEntry(entry: {
-  id: string;
-  mealSlot: string;
-  productId: string | null;
-  product: { name: string; nutritionalFacts: unknown; nutritionBaseGrams: number } | null;
-  recipeId: string | null;
-  recipe: { name: string; servings: number; ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[] } | null;
-  quantity: number;
-  servingUnitId: string | null;
-  servingUnit: { name: string; gramsEquivalent: number } | null;
-  notes: string | null;
-  sortOrder: number;
-}): IntakeEntryResponse {
+function formatEntry(entry: EntryWithRelations): IntakeEntryResponse {
   const { calculatedGrams, nutrition } = calculateEntryNutrition(entry);
-
   return {
     id: entry.id,
-    mealSlot: entry.mealSlot as MealSlot,
+    mealSlot: entry.mealSlot,
     productId: entry.productId,
     productName: entry.product?.name ?? null,
     recipeId: entry.recipeId,
