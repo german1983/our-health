@@ -1,4 +1,6 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, gte, lte, asc, desc, type SQL } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { categories, transactions } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import type {
   CreateCategoryInput,
@@ -15,16 +17,15 @@ import type {
 // ==================== Categories ====================
 
 export async function getCategoryTree(householdId: string): Promise<CategoryResponse[]> {
-  const categories = await prisma.category.findMany({
-    where: { householdId },
-    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  const rows = await db.query.categories.findMany({
+    where: eq(categories.householdId, householdId),
+    orderBy: [asc(categories.sortOrder), asc(categories.name)],
   });
 
-  // Build tree from flat list
   const map = new Map<string, CategoryResponse>();
   const roots: CategoryResponse[] = [];
 
-  for (const cat of categories) {
+  for (const cat of rows) {
     map.set(cat.id, {
       id: cat.id,
       name: cat.name,
@@ -37,7 +38,7 @@ export async function getCategoryTree(householdId: string): Promise<CategoryResp
     });
   }
 
-  for (const cat of categories) {
+  for (const cat of rows) {
     const node = map.get(cat.id)!;
     if (cat.parentId && map.has(cat.parentId)) {
       map.get(cat.parentId)!.children!.push(node);
@@ -49,18 +50,22 @@ export async function getCategoryTree(householdId: string): Promise<CategoryResp
   return roots;
 }
 
-export async function createCategory(input: CreateCategoryInput, householdId: string): Promise<CategoryResponse> {
+export async function createCategory(
+  input: CreateCategoryInput,
+  householdId: string,
+): Promise<CategoryResponse> {
   let level = 0;
   if (input.parentId) {
-    const parent = await prisma.category.findFirst({
-      where: { id: input.parentId, householdId },
+    const parent = await db.query.categories.findFirst({
+      where: and(eq(categories.id, input.parentId), eq(categories.householdId, householdId)),
     });
     if (!parent) throw new NotFoundError('Parent category');
     level = parent.level + 1;
   }
 
-  const category = await prisma.category.create({
-    data: {
+  const [category] = await db
+    .insert(categories)
+    .values({
       householdId,
       name: input.name,
       parentId: input.parentId,
@@ -68,8 +73,8 @@ export async function createCategory(input: CreateCategoryInput, householdId: st
       level,
       icon: input.icon,
       sortOrder: input.sortOrder,
-    },
-  });
+    })
+    .returning();
 
   return {
     id: category.id,
@@ -87,7 +92,9 @@ export async function updateCategory(
   input: UpdateCategoryInput,
   householdId: string,
 ): Promise<CategoryResponse> {
-  const existing = await prisma.category.findFirst({ where: { id, householdId } });
+  const existing = await db.query.categories.findFirst({
+    where: and(eq(categories.id, id), eq(categories.householdId, householdId)),
+  });
   if (!existing) throw new NotFoundError('Category');
 
   let level = existing.level;
@@ -95,18 +102,19 @@ export async function updateCategory(
     if (input.parentId === null) {
       level = 0;
     } else {
-      const parent = await prisma.category.findFirst({
-        where: { id: input.parentId, householdId },
+      const parent = await db.query.categories.findFirst({
+        where: and(eq(categories.id, input.parentId), eq(categories.householdId, householdId)),
       });
       if (!parent) throw new NotFoundError('Parent category');
       level = parent.level + 1;
     }
   }
 
-  const category = await prisma.category.update({
-    where: { id },
-    data: { ...input, level },
-  });
+  const [category] = await db
+    .update(categories)
+    .set({ ...input, level })
+    .where(eq(categories.id, id))
+    .returning();
 
   return {
     id: category.id,
@@ -120,43 +128,44 @@ export async function updateCategory(
 }
 
 export async function deleteCategory(id: string, householdId: string): Promise<void> {
-  const category = await prisma.category.findFirst({ where: { id, householdId } });
+  const category = await db.query.categories.findFirst({
+    where: and(eq(categories.id, id), eq(categories.householdId, householdId)),
+  });
   if (!category) throw new NotFoundError('Category');
 
-  // Re-parent children to this category's parent
-  await prisma.category.updateMany({
-    where: { parentId: id },
-    data: { parentId: category.parentId, level: category.level },
+  await db.transaction(async (tx) => {
+    await tx
+      .update(categories)
+      .set({ parentId: category.parentId, level: category.level })
+      .where(eq(categories.parentId, id));
+    await tx.delete(categories).where(eq(categories.id, id));
   });
-
-  await prisma.category.delete({ where: { id } });
 }
 
 // ==================== Transactions ====================
 
 export async function getTransactions(householdId: string, query: TransactionQueryInput) {
-  const where: Record<string, unknown> = { householdId };
-  if (query.type) where.type = query.type;
-  if (query.categoryId) where.categoryId = query.categoryId;
-  if (query.from || query.to) {
-    where.date = {};
-    if (query.from) (where.date as Record<string, unknown>).gte = new Date(query.from);
-    if (query.to) (where.date as Record<string, unknown>).lte = new Date(query.to);
-  }
+  const filters: SQL[] = [eq(transactions.householdId, householdId)];
+  if (query.type) filters.push(eq(transactions.type, query.type));
+  if (query.categoryId) filters.push(eq(transactions.categoryId, query.categoryId));
+  if (query.from) filters.push(gte(transactions.date, new Date(query.from)));
+  if (query.to) filters.push(lte(transactions.date, new Date(query.to)));
 
-  const [transactions, total] = await Promise.all([
-    prisma.transaction.findMany({
+  const where = and(...filters);
+
+  const [items, total] = await Promise.all([
+    db.query.transactions.findMany({
       where,
-      include: { category: true, createdBy: true },
-      orderBy: { date: 'desc' },
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
+      with: { category: true, createdBy: true },
+      orderBy: desc(transactions.date),
+      offset: (query.page - 1) * query.limit,
+      limit: query.limit,
     }),
-    prisma.transaction.count({ where }),
+    db.$count(transactions, where),
   ]);
 
   return {
-    items: transactions.map(formatTransaction),
+    items: items.map(formatTransaction),
     total,
     page: query.page,
     limit: query.limit,
@@ -169,8 +178,9 @@ export async function createTransaction(
   householdId: string,
   userId: string,
 ): Promise<TransactionResponse> {
-  const transaction = await prisma.transaction.create({
-    data: {
+  const [inserted] = await db
+    .insert(transactions)
+    .values({
       householdId,
       categoryId: input.categoryId,
       amount: input.amount,
@@ -179,11 +189,14 @@ export async function createTransaction(
       description: input.description,
       date: new Date(input.date),
       createdById: userId,
-    },
-    include: { category: true, createdBy: true },
-  });
+    })
+    .returning({ id: transactions.id });
 
-  return formatTransaction(transaction);
+  const transaction = await db.query.transactions.findFirst({
+    where: eq(transactions.id, inserted.id),
+    with: { category: true, createdBy: true },
+  });
+  return formatTransaction(transaction!);
 }
 
 export async function updateTransaction(
@@ -191,25 +204,32 @@ export async function updateTransaction(
   input: UpdateTransactionInput,
   householdId: string,
 ): Promise<TransactionResponse> {
-  const existing = await prisma.transaction.findFirst({ where: { id, householdId } });
+  const existing = await db.query.transactions.findFirst({
+    where: and(eq(transactions.id, id), eq(transactions.householdId, householdId)),
+  });
   if (!existing) throw new NotFoundError('Transaction');
 
-  const transaction = await prisma.transaction.update({
-    where: { id },
-    data: {
+  await db
+    .update(transactions)
+    .set({
       ...input,
       date: input.date ? new Date(input.date) : undefined,
-    },
-    include: { category: true, createdBy: true },
-  });
+    })
+    .where(eq(transactions.id, id));
 
-  return formatTransaction(transaction);
+  const transaction = await db.query.transactions.findFirst({
+    where: eq(transactions.id, id),
+    with: { category: true, createdBy: true },
+  });
+  return formatTransaction(transaction!);
 }
 
 export async function deleteTransaction(id: string, householdId: string): Promise<void> {
-  const existing = await prisma.transaction.findFirst({ where: { id, householdId } });
+  const existing = await db.query.transactions.findFirst({
+    where: and(eq(transactions.id, id), eq(transactions.householdId, householdId)),
+  });
   if (!existing) throw new NotFoundError('Transaction');
-  await prisma.transaction.delete({ where: { id } });
+  await db.delete(transactions).where(eq(transactions.id, id));
 }
 
 export async function getFinanceSummary(
@@ -219,18 +239,18 @@ export async function getFinanceSummary(
   const from = new Date(query.from);
   const to = new Date(query.to);
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      householdId,
-      date: { gte: from, lte: to },
-    },
-    include: { category: true },
-    orderBy: { date: 'asc' },
+  const rows = await db.query.transactions.findMany({
+    where: and(
+      eq(transactions.householdId, householdId),
+      gte(transactions.date, from),
+      lte(transactions.date, to),
+    ),
+    with: { category: true },
+    orderBy: asc(transactions.date),
   });
 
-  // Group by period
-  const groups = new Map<string, typeof transactions>();
-  for (const t of transactions) {
+  const groups = new Map<string, typeof rows>();
+  for (const t of rows) {
     const key = getPeriodKey(t.date, query.groupBy);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(t);
@@ -238,22 +258,14 @@ export async function getFinanceSummary(
 
   const summaries: FinanceSummaryResponse[] = [];
   for (const [period, txns] of groups) {
-    const totalIncome = txns.filter((t) => t.type === 'INCOME').reduce((sum, t) => sum + t.amount, 0);
-    const totalExpenses = txns.filter((t) => t.type === 'EXPENSE').reduce((sum, t) => sum + t.amount, 0);
+    const totalIncome = txns.filter((t) => t.type === 'INCOME').reduce((s, t) => s + t.amount, 0);
+    const totalExpenses = txns.filter((t) => t.type === 'EXPENSE').reduce((s, t) => s + t.amount, 0);
 
-    // Aggregate by category
-    const byCategoryMap = new Map<string, { name: string; type: string; total: number }>();
+    const byCategoryMap = new Map<string, { name: string; type: 'INCOME' | 'EXPENSE'; total: number }>();
     for (const t of txns) {
-      const existing = byCategoryMap.get(t.categoryId);
-      if (existing) {
-        existing.total += t.amount;
-      } else {
-        byCategoryMap.set(t.categoryId, {
-          name: t.category.name,
-          type: t.category.type,
-          total: t.amount,
-        });
-      }
+      const ex = byCategoryMap.get(t.categoryId);
+      if (ex) ex.total += t.amount;
+      else byCategoryMap.set(t.categoryId, { name: t.category.name, type: t.category.type, total: t.amount });
     }
 
     summaries.push({
@@ -265,7 +277,7 @@ export async function getFinanceSummary(
       byCategory: Array.from(byCategoryMap.entries()).map(([categoryId, data]) => ({
         categoryId,
         categoryName: data.name,
-        type: data.type as 'INCOME' | 'EXPENSE',
+        type: data.type,
         total: Math.round(data.total * 100) / 100,
       })),
     });
@@ -278,14 +290,13 @@ function getPeriodKey(date: Date, groupBy: string): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
-
   switch (groupBy) {
     case 'day':
       return `${y}-${m}-${d}`;
     case 'week': {
       const weekStart = new Date(date);
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      return `${weekStart.getFullYear()}-W${String(Math.ceil((weekStart.getDate()) / 7)).padStart(2, '0')}`;
+      return `${weekStart.getFullYear()}-W${String(Math.ceil(weekStart.getDate() / 7)).padStart(2, '0')}`;
     }
     case 'month':
       return `${y}-${m}`;
@@ -302,7 +313,7 @@ function formatTransaction(t: {
   category: { name: string };
   amount: number;
   currencyCode: string;
-  type: string;
+  type: 'INCOME' | 'EXPENSE';
   description: string | null;
   date: Date;
   createdById: string;
@@ -315,7 +326,7 @@ function formatTransaction(t: {
     categoryName: t.category.name,
     amount: t.amount,
     currencyCode: t.currencyCode,
-    type: t.type as 'INCOME' | 'EXPENSE',
+    type: t.type,
     description: t.description,
     date: t.date.toISOString(),
     createdBy: t.createdBy.name,

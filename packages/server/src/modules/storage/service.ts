@@ -1,4 +1,6 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, inArray, asc, desc } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { storageSpaces, storageItems } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import type {
   CreateStorageSpaceInput,
@@ -12,10 +14,10 @@ import type {
 // ==================== Storage Spaces ====================
 
 export async function getSpaces(householdId: string): Promise<StorageSpaceResponse[]> {
-  const spaces = await prisma.storageSpace.findMany({
-    where: { householdId },
-    include: { _count: { select: { items: true } } },
-    orderBy: { sortOrder: 'asc' },
+  const spaces = await db.query.storageSpaces.findMany({
+    where: eq(storageSpaces.householdId, householdId),
+    with: { items: { columns: { id: true } } },
+    orderBy: asc(storageSpaces.sortOrder),
   });
 
   return spaces.map((s) => ({
@@ -24,21 +26,24 @@ export async function getSpaces(householdId: string): Promise<StorageSpaceRespon
     description: s.description,
     spaceType: s.spaceType,
     sortOrder: s.sortOrder,
-    itemCount: s._count.items,
+    itemCount: s.items.length,
   }));
 }
 
-export async function createSpace(input: CreateStorageSpaceInput, householdId: string): Promise<StorageSpaceResponse> {
-  const space = await prisma.storageSpace.create({
-    data: {
+export async function createSpace(
+  input: CreateStorageSpaceInput,
+  householdId: string,
+): Promise<StorageSpaceResponse> {
+  const [space] = await db
+    .insert(storageSpaces)
+    .values({
       householdId,
       name: input.name,
       description: input.description,
       spaceType: input.spaceType,
       sortOrder: input.sortOrder,
-    },
-    include: { _count: { select: { items: true } } },
-  });
+    })
+    .returning();
 
   return {
     id: space.id,
@@ -46,7 +51,7 @@ export async function createSpace(input: CreateStorageSpaceInput, householdId: s
     description: space.description,
     spaceType: space.spaceType,
     sortOrder: space.sortOrder,
-    itemCount: space._count.items,
+    itemCount: 0,
   };
 }
 
@@ -55,11 +60,15 @@ export async function updateSpace(
   input: UpdateStorageSpaceInput,
   householdId: string,
 ): Promise<StorageSpaceResponse> {
-  const space = await prisma.storageSpace.update({
-    where: { id, householdId },
-    data: input,
-    include: { _count: { select: { items: true } } },
-  });
+  const [space] = await db
+    .update(storageSpaces)
+    .set(input)
+    .where(and(eq(storageSpaces.id, id), eq(storageSpaces.householdId, householdId)))
+    .returning();
+
+  if (!space) throw new NotFoundError('Storage space');
+
+  const itemCount = await db.$count(storageItems, eq(storageItems.storageSpaceId, id));
 
   return {
     id: space.id,
@@ -67,84 +76,117 @@ export async function updateSpace(
     description: space.description,
     spaceType: space.spaceType,
     sortOrder: space.sortOrder,
-    itemCount: space._count.items,
+    itemCount,
   };
 }
 
 export async function deleteSpace(id: string, householdId: string): Promise<void> {
-  await prisma.storageSpace.delete({ where: { id, householdId } });
+  await db
+    .delete(storageSpaces)
+    .where(and(eq(storageSpaces.id, id), eq(storageSpaces.householdId, householdId)));
 }
 
 // ==================== Storage Items ====================
 
-export async function getSpaceItems(spaceId: string): Promise<StorageItemResponse[]> {
-  const items = await prisma.storageItem.findMany({
-    where: { storageSpaceId: spaceId },
-    include: { product: true, storageSpace: true, addedBy: true },
-    orderBy: { addedAt: 'desc' },
-  });
-
-  return items.map(formatItem);
-}
-
-export async function addItem(input: CreateStorageItemInput, userId: string): Promise<StorageItemResponse> {
-  const item = await prisma.storageItem.create({
-    data: {
-      storageSpaceId: input.storageSpaceId,
-      productId: input.productId,
-      quantity: input.quantity,
-      unit: input.unit,
-      expiryDate: input.expiryDate ? new Date(input.expiryDate) : undefined,
-      addedById: userId,
-    },
-    include: { product: true, storageSpace: true, addedBy: true },
-  });
-
-  return formatItem(item);
-}
-
-export async function updateItem(id: string, input: UpdateStorageItemInput): Promise<StorageItemResponse> {
-  const item = await prisma.storageItem.update({
-    where: { id },
-    data: {
-      quantity: input.quantity,
-      unit: input.unit,
-      storageSpaceId: input.storageSpaceId,
-      expiryDate: input.expiryDate === null ? null : input.expiryDate ? new Date(input.expiryDate) : undefined,
-    },
-    include: { product: true, storageSpace: true, addedBy: true },
-  });
-
-  return formatItem(item);
-}
-
-export async function removeItem(id: string): Promise<void> {
-  await prisma.storageItem.delete({ where: { id } });
-}
-
-export async function getFullInventory(householdId: string): Promise<StorageItemResponse[]> {
-  const items = await prisma.storageItem.findMany({
-    where: { storageSpace: { householdId } },
-    include: { product: true, storageSpace: true, addedBy: true },
-    orderBy: [{ storageSpace: { sortOrder: 'asc' } }, { addedAt: 'desc' }],
-  });
-
-  return items.map(formatItem);
-}
-
-function formatItem(item: {
+type ItemWithRelations = {
   id: string;
   storageSpaceId: string;
-  storageSpace: { name: string };
   productId: string;
-  product: { name: string; barcode: string | null };
   quantity: number;
   unit: string;
   addedAt: Date;
   expiryDate: Date | null;
+  product: { name: string; barcode: string | null };
+  storageSpace: { name: string; sortOrder: number };
   addedBy: { name: string };
-  addedById: string;
-}): StorageItemResponse {
+};
+
+const itemRelations = {
+  product: true,
+  storageSpace: true,
+  addedBy: true,
+} as const;
+
+export async function getSpaceItems(spaceId: string): Promise<StorageItemResponse[]> {
+  const items = await db.query.storageItems.findMany({
+    where: eq(storageItems.storageSpaceId, spaceId),
+    with: itemRelations,
+    orderBy: desc(storageItems.addedAt),
+  });
+  return items.map((i) => formatItem(i as unknown as ItemWithRelations));
+}
+
+export async function addItem(
+  input: CreateStorageItemInput,
+  userId: string,
+): Promise<StorageItemResponse> {
+  const [inserted] = await db
+    .insert(storageItems)
+    .values({
+      storageSpaceId: input.storageSpaceId,
+      productId: input.productId,
+      quantity: input.quantity,
+      unit: input.unit,
+      expiryDate: input.expiryDate ? new Date(input.expiryDate) : null,
+      addedById: userId,
+    })
+    .returning({ id: storageItems.id });
+
+  const item = await db.query.storageItems.findFirst({
+    where: eq(storageItems.id, inserted.id),
+    with: itemRelations,
+  });
+  return formatItem(item as unknown as ItemWithRelations);
+}
+
+export async function updateItem(
+  id: string,
+  input: UpdateStorageItemInput,
+): Promise<StorageItemResponse> {
+  const expiryDate =
+    input.expiryDate === null ? null : input.expiryDate ? new Date(input.expiryDate) : undefined;
+
+  await db
+    .update(storageItems)
+    .set({
+      quantity: input.quantity,
+      unit: input.unit,
+      storageSpaceId: input.storageSpaceId,
+      expiryDate,
+    })
+    .where(eq(storageItems.id, id));
+
+  const item = await db.query.storageItems.findFirst({
+    where: eq(storageItems.id, id),
+    with: itemRelations,
+  });
+  if (!item) throw new NotFoundError('Storage item');
+  return formatItem(item as unknown as ItemWithRelations);
+}
+
+export async function removeItem(id: string): Promise<void> {
+  await db.delete(storageItems).where(eq(storageItems.id, id));
+}
+
+export async function getFullInventory(householdId: string): Promise<StorageItemResponse[]> {
+  const items = (await db.query.storageItems.findMany({
+    where: inArray(
+      storageItems.storageSpaceId,
+      db.select({ id: storageSpaces.id }).from(storageSpaces).where(eq(storageSpaces.householdId, householdId)),
+    ),
+    with: itemRelations,
+  })) as unknown as ItemWithRelations[];
+
+  items.sort((a, b) => {
+    const diff = a.storageSpace.sortOrder - b.storageSpace.sortOrder;
+    if (diff !== 0) return diff;
+    return b.addedAt.getTime() - a.addedAt.getTime();
+  });
+
+  return items.map(formatItem);
+}
+
+function formatItem(item: ItemWithRelations): StorageItemResponse {
   return {
     id: item.id,
     storageSpaceId: item.storageSpaceId,

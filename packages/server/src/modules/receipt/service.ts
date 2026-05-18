@@ -1,18 +1,46 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, desc } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import {
+  priceRecords,
+  receiptItems,
+  receipts,
+  storeProductCodes,
+  stores,
+} from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import type { ReceiptItemResponse, ReceiptResponse } from '@personal-budget/shared';
 import { parseReceipt } from './parsers/index.js';
 
-const receiptItemWithProduct = Prisma.validator<Prisma.ReceiptItemDefaultArgs>()({
-  include: { product: true },
-});
-type ReceiptItemWithProduct = Prisma.ReceiptItemGetPayload<typeof receiptItemWithProduct>;
+const receiptRelations = {
+  items: { with: { product: true } },
+} as const;
 
-const receiptWithItems = Prisma.validator<Prisma.ReceiptDefaultArgs>()({
-  include: { items: { include: { product: true } } },
-});
-type ReceiptWithItems = Prisma.ReceiptGetPayload<typeof receiptWithItems>;
+type ReceiptWithItems = {
+  id: string;
+  store: string;
+  storeId: string | null;
+  status: 'PENDING' | 'PARSED' | 'REVIEWED' | 'FAILED';
+  purchasedAt: Date | null;
+  subtotal: number | null;
+  tax: number | null;
+  total: number | null;
+  currencyCode: string;
+  parserVersion: string | null;
+  createdAt: Date;
+  items: ReceiptItemWithProduct[];
+};
+
+type ReceiptItemWithProduct = {
+  id: string;
+  rawName: string;
+  rawCode: string | null;
+  quantity: number;
+  unitPrice: number | null;
+  lineTotal: number;
+  matched: boolean;
+  productId: string | null;
+  product: { name: string } | null;
+};
 
 export interface CreateReceiptOptions {
   rawText: string;
@@ -25,20 +53,20 @@ export interface CreateReceiptOptions {
 
 export async function createReceipt(opts: CreateReceiptOptions): Promise<ReceiptResponse> {
   if (opts.storeId) {
-    const store = await prisma.store.findFirst({
-      where: { id: opts.storeId, householdId: opts.householdId },
+    const store = await db.query.stores.findFirst({
+      where: and(eq(stores.id, opts.storeId), eq(stores.householdId, opts.householdId)),
     });
     if (!store) throw new NotFoundError('Store');
   }
 
   const parsed = parseReceipt(opts.rawText, opts.storeHint);
 
-  const itemsToCreate = await Promise.all(
+  const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
       let productId: string | null = null;
       if (item.rawCode && opts.storeId) {
-        const mapping = await prisma.storeProductCode.findUnique({
-          where: { storeId_code: { storeId: opts.storeId, code: item.rawCode } },
+        const mapping = await db.query.storeProductCodes.findFirst({
+          where: and(eq(storeProductCodes.storeId, opts.storeId), eq(storeProductCodes.code, item.rawCode)),
         });
         productId = mapping?.productId ?? null;
       }
@@ -56,70 +84,80 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
 
   const status = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
 
-  const receipt = await prisma.receipt.create({
-    data: {
-      householdId: opts.householdId,
-      uploadedById: opts.userId,
-      storeId: opts.storeId,
-      store: parsed.store,
-      parserVersion: parsed.parserVersion,
-      rawText: opts.rawText,
-      parsedData: parsed as unknown as Prisma.InputJsonValue,
-      status,
-      purchasedAt: parsed.purchasedAt ?? null,
-      subtotal: parsed.subtotal ?? null,
-      tax: parsed.tax ?? null,
-      total: parsed.total ?? null,
-      currencyCode: opts.currencyCode,
-      items: { create: itemsToCreate },
-    },
-    ...receiptWithItems,
+  const receiptId = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(receipts)
+      .values({
+        householdId: opts.householdId,
+        uploadedById: opts.userId,
+        storeId: opts.storeId,
+        store: parsed.store,
+        parserVersion: parsed.parserVersion,
+        rawText: opts.rawText,
+        parsedData: parsed,
+        status,
+        purchasedAt: parsed.purchasedAt ?? null,
+        subtotal: parsed.subtotal ?? null,
+        tax: parsed.tax ?? null,
+        total: parsed.total ?? null,
+        currencyCode: opts.currencyCode,
+      })
+      .returning({ id: receipts.id });
+
+    if (matchedItems.length > 0) {
+      await tx
+        .insert(receiptItems)
+        .values(matchedItems.map((i) => ({ ...i, receiptId: created.id })));
+    }
+
+    if (opts.storeId) {
+      const toRecord = matchedItems.filter((i) => i.productId && i.unitPrice != null);
+      if (toRecord.length > 0) {
+        await tx.insert(priceRecords).values(
+          toRecord.map((i) => ({
+            productId: i.productId as string,
+            storeId: opts.storeId as string,
+            price: i.unitPrice as number,
+            currencyCode: opts.currencyCode,
+            recordedById: opts.userId,
+          })),
+        );
+      }
+    }
+
+    return created.id;
   });
 
-  if (opts.storeId) {
-    const priceRecords = receipt.items
-      .filter((i) => i.productId && i.unitPrice != null)
-      .map((i) => ({
-        productId: i.productId as string,
-        storeId: opts.storeId as string,
-        price: i.unitPrice as number,
-        currencyCode: opts.currencyCode,
-        recordedById: opts.userId,
-      }));
-    if (priceRecords.length > 0) {
-      await prisma.priceRecord.createMany({ data: priceRecords });
-    }
-  }
-
-  return formatReceipt(receipt);
+  return getReceipt(receiptId, opts.householdId);
 }
 
 export async function getReceipt(id: string, householdId: string): Promise<ReceiptResponse> {
-  const receipt = await prisma.receipt.findFirst({
-    where: { id, householdId },
-    ...receiptWithItems,
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, id), eq(receipts.householdId, householdId)),
+    with: receiptRelations,
   });
   if (!receipt) throw new NotFoundError('Receipt');
-  return formatReceipt(receipt);
+  return formatReceipt(receipt as unknown as ReceiptWithItems);
 }
 
 export async function listReceipts(householdId: string): Promise<ReceiptResponse[]> {
-  const receipts = await prisma.receipt.findMany({
-    where: { householdId },
-    ...receiptWithItems,
-    orderBy: { createdAt: 'desc' },
-    take: 50,
+  const rows = await db.query.receipts.findMany({
+    where: eq(receipts.householdId, householdId),
+    with: receiptRelations,
+    orderBy: desc(receipts.createdAt),
+    limit: 50,
   });
-  return receipts.map(formatReceipt);
+  return rows.map((r) => formatReceipt(r as unknown as ReceiptWithItems));
 }
 
 export async function getReceiptRawText(id: string, householdId: string): Promise<string> {
-  const receipt = await prisma.receipt.findFirst({
-    where: { id, householdId },
-    select: { rawText: true },
-  });
-  if (!receipt) throw new NotFoundError('Receipt');
-  return receipt.rawText;
+  const receipt = await db
+    .select({ rawText: receipts.rawText })
+    .from(receipts)
+    .where(and(eq(receipts.id, id), eq(receipts.householdId, householdId)))
+    .limit(1);
+  if (receipt.length === 0) throw new NotFoundError('Receipt');
+  return receipt[0].rawText;
 }
 
 export interface ReparseOptions {
@@ -129,19 +167,22 @@ export interface ReparseOptions {
 }
 
 export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptResponse> {
-  const existing = await prisma.receipt.findFirst({
-    where: { id: opts.receiptId, householdId: opts.householdId },
+  const existing = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, opts.receiptId), eq(receipts.householdId, opts.householdId)),
   });
   if (!existing) throw new NotFoundError('Receipt');
 
   const parsed = parseReceipt(existing.rawText, opts.storeHint);
 
-  const itemsToCreate = await Promise.all(
+  const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
       let productId: string | null = null;
       if (item.rawCode && existing.storeId) {
-        const mapping = await prisma.storeProductCode.findUnique({
-          where: { storeId_code: { storeId: existing.storeId, code: item.rawCode } },
+        const mapping = await db.query.storeProductCodes.findFirst({
+          where: and(
+            eq(storeProductCodes.storeId, existing.storeId),
+            eq(storeProductCodes.code, item.rawCode),
+          ),
         });
         productId = mapping?.productId ?? null;
       }
@@ -159,29 +200,31 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
 
   const status = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
 
-  // Reparse is a tuning operation: we replace items and parsed metadata
-  // but leave any PriceRecord rows created on the original upload alone.
-  // Recording prices for newly-matched lines happens through /confirm.
-  const updated = await prisma.$transaction(async (tx) => {
-    await tx.receiptItem.deleteMany({ where: { receiptId: existing.id } });
-    return tx.receipt.update({
-      where: { id: existing.id },
-      data: {
+  // Reparse is a tuning operation: items + parsed metadata are replaced,
+  // but PriceRecord rows created on the original upload stay intact.
+  await db.transaction(async (tx) => {
+    await tx.delete(receiptItems).where(eq(receiptItems.receiptId, existing.id));
+    await tx
+      .update(receipts)
+      .set({
         store: parsed.store,
         parserVersion: parsed.parserVersion,
-        parsedData: parsed as unknown as Prisma.InputJsonValue,
+        parsedData: parsed,
         status,
         purchasedAt: parsed.purchasedAt ?? null,
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
         total: parsed.total ?? null,
-        items: { create: itemsToCreate },
-      },
-      ...receiptWithItems,
-    });
+      })
+      .where(eq(receipts.id, existing.id));
+    if (matchedItems.length > 0) {
+      await tx
+        .insert(receiptItems)
+        .values(matchedItems.map((i) => ({ ...i, receiptId: existing.id })));
+    }
   });
 
-  return formatReceipt(updated);
+  return getReceipt(existing.id, opts.householdId);
 }
 
 export interface ConfirmItemArgs {
@@ -193,46 +236,48 @@ export interface ConfirmItemArgs {
 }
 
 export async function confirmReceiptItem(args: ConfirmItemArgs): Promise<ReceiptItemResponse> {
-  const item = await prisma.receiptItem.findFirst({
-    where: { id: args.receiptItemId, receipt: { householdId: args.householdId } },
-    include: { receipt: true },
+  const item = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, args.receiptItemId),
+    with: { receipt: true },
   });
-  if (!item) throw new NotFoundError('Receipt item');
+  if (!item || item.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Receipt item');
+  }
 
-  await prisma.receiptItem.update({
-    where: { id: item.id },
-    data: { productId: args.productId, matched: true },
-  });
+  await db
+    .update(receiptItems)
+    .set({ productId: args.productId, matched: true })
+    .where(eq(receiptItems.id, item.id));
 
   if (args.saveStoreCode && item.rawCode && item.receipt.storeId) {
-    await prisma.storeProductCode.upsert({
-      where: { storeId_code: { storeId: item.receipt.storeId, code: item.rawCode } },
-      create: {
+    await db
+      .insert(storeProductCodes)
+      .values({
         storeId: item.receipt.storeId,
         code: item.rawCode,
         productId: args.productId,
-      },
-      update: { productId: args.productId },
-    });
+      })
+      .onConflictDoUpdate({
+        target: [storeProductCodes.storeId, storeProductCodes.code],
+        set: { productId: args.productId },
+      });
   }
 
   if (item.unitPrice != null && item.receipt.storeId) {
-    await prisma.priceRecord.create({
-      data: {
-        productId: args.productId,
-        storeId: item.receipt.storeId,
-        price: item.unitPrice,
-        currencyCode: item.receipt.currencyCode,
-        recordedById: args.userId,
-      },
+    await db.insert(priceRecords).values({
+      productId: args.productId,
+      storeId: item.receipt.storeId,
+      price: item.unitPrice,
+      currencyCode: item.receipt.currencyCode,
+      recordedById: args.userId,
     });
   }
 
-  const updated = await prisma.receiptItem.findUniqueOrThrow({
-    where: { id: item.id },
-    ...receiptItemWithProduct,
+  const updated = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, item.id),
+    with: { product: true },
   });
-  return formatItem(updated);
+  return formatItem(updated as unknown as ReceiptItemWithProduct);
 }
 
 function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {

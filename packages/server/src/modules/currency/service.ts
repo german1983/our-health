@@ -1,9 +1,15 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, inArray, desc, asc } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { currencies, households, householdCurrencies, exchangeRates } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { fetchLatestRates, fetchHistoricalRate } from '../../integrations/exchange-rates.js';
-import type { CurrencyResponse, ExchangeRateResponse, ConvertCurrencyInput, ConvertCurrencyResponse } from '@personal-budget/shared';
+import type {
+  CurrencyResponse,
+  ExchangeRateResponse,
+  ConvertCurrencyInput,
+  ConvertCurrencyResponse,
+} from '@personal-budget/shared';
 
-// Common currencies to seed
 const COMMON_CURRENCIES: CurrencyResponse[] = [
   { code: 'USD', name: 'US Dollar', symbol: '$' },
   { code: 'EUR', name: 'Euro', symbol: '€' },
@@ -32,46 +38,41 @@ const COMMON_CURRENCIES: CurrencyResponse[] = [
 ];
 
 export async function getCurrencies(): Promise<CurrencyResponse[]> {
-  const currencies = await prisma.currency.findMany({ orderBy: { code: 'asc' } });
-  if (currencies.length === 0) {
-    // Seed currencies on first call
-    await prisma.currency.createMany({
-      data: COMMON_CURRENCIES,
-      skipDuplicates: true,
-    });
+  const rows = await db.query.currencies.findMany({ orderBy: asc(currencies.code) });
+  if (rows.length === 0) {
+    await db.insert(currencies).values(COMMON_CURRENCIES).onConflictDoNothing();
     return COMMON_CURRENCIES;
   }
-  return currencies;
+  return rows;
 }
 
 export async function getRatesForHousehold(householdId: string): Promise<ExchangeRateResponse[]> {
-  const household = await prisma.household.findUnique({ where: { id: householdId } });
+  const household = await db.query.households.findFirst({ where: eq(households.id, householdId) });
   if (!household) throw new NotFoundError('Household');
 
-  const householdCurrencies = await prisma.householdCurrency.findMany({
-    where: { householdId },
+  const houseCurrencies = await db.query.householdCurrencies.findMany({
+    where: eq(householdCurrencies.householdId, householdId),
   });
 
-  const currencyCodes = householdCurrencies.map((hc) => hc.currencyCode);
+  const currencyCodes = houseCurrencies.map((hc) => hc.currencyCode);
   if (currencyCodes.length <= 1) return [];
 
   const baseCurrency = household.defaultCurrency;
   const targets = currencyCodes.filter((c) => c !== baseCurrency);
-
   if (targets.length === 0) return [];
 
-  // Check if we have today's rates
-  const today = new Date().toISOString().split('T')[0];
-  const existingRates = await prisma.exchangeRate.findMany({
-    where: {
-      fromCurrency: baseCurrency,
-      toCurrency: { in: targets },
-      date: new Date(today),
-    },
+  const today = new Date(new Date().toISOString().split('T')[0]);
+
+  const existing = await db.query.exchangeRates.findMany({
+    where: and(
+      eq(exchangeRates.fromCurrency, baseCurrency),
+      inArray(exchangeRates.toCurrency, targets),
+      eq(exchangeRates.date, today),
+    ),
   });
 
-  if (existingRates.length === targets.length) {
-    return existingRates.map((r) => ({
+  if (existing.length === targets.length) {
+    return existing.map((r) => ({
       from: r.fromCurrency,
       to: r.toCurrency,
       rate: r.rate,
@@ -79,15 +80,21 @@ export async function getRatesForHousehold(householdId: string): Promise<Exchang
     }));
   }
 
-  // Fetch fresh rates
   const fetched = await fetchLatestRates(baseCurrency, targets);
   if (!fetched) {
-    // Return stale rates if available
-    const stale = await prisma.exchangeRate.findMany({
-      where: { fromCurrency: baseCurrency, toCurrency: { in: targets } },
-      orderBy: { date: 'desc' },
-      distinct: ['toCurrency'],
-    });
+    const stale = await db
+      .selectDistinctOn([exchangeRates.toCurrency], {
+        fromCurrency: exchangeRates.fromCurrency,
+        toCurrency: exchangeRates.toCurrency,
+        rate: exchangeRates.rate,
+        date: exchangeRates.date,
+      })
+      .from(exchangeRates)
+      .where(
+        and(eq(exchangeRates.fromCurrency, baseCurrency), inArray(exchangeRates.toCurrency, targets)),
+      )
+      .orderBy(exchangeRates.toCurrency, desc(exchangeRates.date));
+
     return stale.map((r) => ({
       from: r.fromCurrency,
       to: r.toCurrency,
@@ -96,25 +103,15 @@ export async function getRatesForHousehold(householdId: string): Promise<Exchang
     }));
   }
 
-  // Store rates
   const rateDate = new Date(fetched.date);
   for (const [currency, rate] of Object.entries(fetched.rates)) {
-    await prisma.exchangeRate.upsert({
-      where: {
-        fromCurrency_toCurrency_date: {
-          fromCurrency: baseCurrency,
-          toCurrency: currency,
-          date: rateDate,
-        },
-      },
-      create: {
-        fromCurrency: baseCurrency,
-        toCurrency: currency,
-        rate,
-        date: rateDate,
-      },
-      update: { rate },
-    });
+    await db
+      .insert(exchangeRates)
+      .values({ fromCurrency: baseCurrency, toCurrency: currency, rate, date: rateDate })
+      .onConflictDoUpdate({
+        target: [exchangeRates.fromCurrency, exchangeRates.toCurrency, exchangeRates.date],
+        set: { rate },
+      });
   }
 
   return Object.entries(fetched.rates).map(([currency, rate]) => ({
@@ -137,22 +134,21 @@ export async function convertCurrency(input: ConvertCurrencyInput): Promise<Conv
     };
   }
 
-  let rate: number | null = null;
   const date = input.date || new Date().toISOString().split('T')[0];
+  const dateObj = new Date(date);
 
-  // Check stored rates
-  const stored = await prisma.exchangeRate.findFirst({
-    where: {
-      fromCurrency: input.from,
-      toCurrency: input.to,
-      date: new Date(date),
-    },
+  let rate: number | null = null;
+  const stored = await db.query.exchangeRates.findFirst({
+    where: and(
+      eq(exchangeRates.fromCurrency, input.from),
+      eq(exchangeRates.toCurrency, input.to),
+      eq(exchangeRates.date, dateObj),
+    ),
   });
 
   if (stored) {
     rate = stored.rate;
   } else {
-    // Fetch from API
     if (input.date) {
       rate = await fetchHistoricalRate(input.from, input.to, input.date);
     } else {
@@ -160,30 +156,18 @@ export async function convertCurrency(input: ConvertCurrencyInput): Promise<Conv
       rate = fetched?.rates[input.to] ?? null;
     }
 
-    // Store for future use
     if (rate !== null) {
-      await prisma.exchangeRate.upsert({
-        where: {
-          fromCurrency_toCurrency_date: {
-            fromCurrency: input.from,
-            toCurrency: input.to,
-            date: new Date(date),
-          },
-        },
-        create: {
-          fromCurrency: input.from,
-          toCurrency: input.to,
-          rate,
-          date: new Date(date),
-        },
-        update: { rate },
-      });
+      await db
+        .insert(exchangeRates)
+        .values({ fromCurrency: input.from, toCurrency: input.to, rate, date: dateObj })
+        .onConflictDoUpdate({
+          target: [exchangeRates.fromCurrency, exchangeRates.toCurrency, exchangeRates.date],
+          set: { rate },
+        });
     }
   }
 
-  if (rate === null) {
-    throw new NotFoundError('Exchange rate');
-  }
+  if (rate === null) throw new NotFoundError('Exchange rate');
 
   return {
     amount: input.amount,

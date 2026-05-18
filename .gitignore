@@ -6,9 +6,9 @@ dist/
 .turbo
 *.tsbuildinfo
 
-# Prisma
-packages/server/prisma/*.db
-packages/server/prisma/migrations/
+# Drizzle migrations are committed; only ignore the local snapshot meta if needed
+# (drizzle/meta/_journal.json IS committed)
+
 
 # IDE
 .vscode/

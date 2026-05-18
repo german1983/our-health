@@ -1,7 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { and, eq, isNotNull, desc } from 'drizzle-orm';
 import { UnauthorizedError } from '../lib/errors.js';
-import { prisma } from '../lib/prisma.js';
+import { db } from '../lib/db.js';
+import { householdMembers } from '../db/schema.js';
 
 export interface AuthPayload {
   userId: string;
@@ -40,9 +42,9 @@ export async function requireHousehold(req: Request, _res: Response, next: NextF
   }
 
   try {
-    const membership = await prisma.householdMember.findFirst({
-      where: { userId: req.userId, acceptedAt: { not: null } },
-      orderBy: { acceptedAt: 'desc' },
+    const membership = await db.query.householdMembers.findFirst({
+      where: and(eq(householdMembers.userId, req.userId), isNotNull(householdMembers.acceptedAt)),
+      orderBy: desc(householdMembers.acceptedAt),
     });
 
     if (!membership) {

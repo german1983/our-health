@@ -1,4 +1,6 @@
-import { prisma } from '../../lib/prisma.js';
+import { and, eq, ilike, or, asc, desc, sql } from 'drizzle-orm';
+import { db } from '../../lib/db.js';
+import { brands, products, stores, priceRecords } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { fetchProductByBarcode } from '../../integrations/open-food-facts.js';
 import type {
@@ -7,6 +9,7 @@ import type {
   UpdateStoreInput,
   CreatePriceRecordInput,
   BrandResponse,
+  NutritionalFacts,
   ProductResponse,
   StoreResponse,
   PriceRecordResponse,
@@ -15,66 +18,59 @@ import type {
 // ==================== Products ====================
 
 export async function lookupByBarcode(barcode: string): Promise<ProductResponse> {
-  // Check local DB first
-  const existing = await prisma.product.findUnique({ where: { barcode } });
-  if (existing) {
-    return formatProduct(existing);
-  }
+  const existing = await db.query.products.findFirst({ where: eq(products.barcode, barcode) });
+  if (existing) return formatProduct(existing);
 
-  // Fetch from Open Food Facts
   const offData = await fetchProductByBarcode(barcode);
-  if (!offData) {
-    throw new NotFoundError('Product not found for this barcode');
-  }
+  if (!offData) throw new NotFoundError('Product not found for this barcode');
 
   let brandId: string | undefined;
   if (offData.brand) {
-    const brand = await prisma.brand.upsert({
-      where: { name: offData.brand },
-      create: { name: offData.brand },
-      update: {},
-    });
+    const [brand] = await db
+      .insert(brands)
+      .values({ name: offData.brand })
+      .onConflictDoUpdate({ target: brands.name, set: { name: offData.brand } })
+      .returning();
     brandId = brand.id;
   }
 
-  const product = await prisma.product.create({
-    data: {
+  const [product] = await db
+    .insert(products)
+    .values({
       barcode,
       name: offData.name,
       brand: offData.brand,
       brandId,
       imageUrl: offData.imageUrl,
-      nutritionalFacts: offData.nutritionalFacts ?? undefined,
-      offRawData: offData.rawData as object,
-    },
-  });
+      nutritionalFacts: (offData.nutritionalFacts ?? null) as NutritionalFacts | null,
+      offRawData: offData.rawData,
+    })
+    .returning();
 
   return formatProduct(product);
 }
 
 export async function searchProducts(query?: string, page = 1, limit = 20) {
   const where = query
-    ? {
-        OR: [
-          { name: { contains: query, mode: 'insensitive' as const } },
-          { brand: { contains: query, mode: 'insensitive' as const } },
-          { barcode: { contains: query } },
-        ],
-      }
-    : {};
+    ? or(
+        ilike(products.name, `%${query}%`),
+        ilike(products.brand, `%${query}%`),
+        ilike(products.barcode, `%${query}%`),
+      )
+    : undefined;
 
-  const [products, total] = await Promise.all([
-    prisma.product.findMany({
+  const [items, total] = await Promise.all([
+    db.query.products.findMany({
       where,
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: { name: 'asc' },
+      orderBy: asc(products.name),
+      limit,
+      offset: (page - 1) * limit,
     }),
-    prisma.product.count({ where }),
+    db.$count(products, where),
   ]);
 
   return {
-    items: products.map(formatProduct),
+    items: items.map(formatProduct),
     total,
     page,
     limit,
@@ -85,47 +81,49 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
 export async function createProduct(input: CreateProductInput): Promise<ProductResponse> {
   let brandId: string | undefined;
   if (input.brand) {
-    const brand = await prisma.brand.upsert({
-      where: { name: input.brand },
-      create: { name: input.brand },
-      update: {},
-    });
+    const [brand] = await db
+      .insert(brands)
+      .values({ name: input.brand })
+      .onConflictDoUpdate({ target: brands.name, set: { name: input.brand } })
+      .returning();
     brandId = brand.id;
   }
 
-  const product = await prisma.product.create({
-    data: {
+  const [product] = await db
+    .insert(products)
+    .values({
       barcode: input.barcode,
       name: input.name,
       brand: input.brand,
       brandId,
       imageUrl: input.imageUrl,
-      nutritionalFacts: input.nutritionalFacts ?? undefined,
+      nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
       nutritionBaseGrams: input.nutritionBaseGrams ?? 100,
-    },
-  });
+    })
+    .returning();
+
   return formatProduct(product);
 }
 
 // ==================== Brands ====================
 
 export async function searchBrands(query: string): Promise<BrandResponse[]> {
-  const brands = await prisma.brand.findMany({
-    where: { name: { contains: query, mode: 'insensitive' } },
-    orderBy: { name: 'asc' },
-    take: 20,
+  const result = await db.query.brands.findMany({
+    where: ilike(brands.name, `%${query}%`),
+    orderBy: asc(brands.name),
+    limit: 20,
   });
-  return brands.map((b) => ({ id: b.id, name: b.name }));
+  return result.map((b) => ({ id: b.id, name: b.name }));
 }
 
 // ==================== Stores ====================
 
 export async function getStores(householdId: string): Promise<StoreResponse[]> {
-  const stores = await prisma.store.findMany({
-    where: { householdId },
-    orderBy: { name: 'asc' },
+  const result = await db.query.stores.findMany({
+    where: eq(stores.householdId, householdId),
+    orderBy: asc(stores.name),
   });
-  return stores.map((s) => ({
+  return result.map((s) => ({
     id: s.id,
     name: s.name,
     location: s.location,
@@ -134,13 +132,10 @@ export async function getStores(householdId: string): Promise<StoreResponse[]> {
 }
 
 export async function createStore(input: CreateStoreInput, householdId: string): Promise<StoreResponse> {
-  const store = await prisma.store.create({
-    data: {
-      householdId,
-      name: input.name,
-      location: input.location,
-    },
-  });
+  const [store] = await db
+    .insert(stores)
+    .values({ householdId, name: input.name, location: input.location })
+    .returning();
   return {
     id: store.id,
     name: store.name,
@@ -149,11 +144,17 @@ export async function createStore(input: CreateStoreInput, householdId: string):
   };
 }
 
-export async function updateStore(id: string, input: UpdateStoreInput, householdId: string): Promise<StoreResponse> {
-  const store = await prisma.store.update({
-    where: { id, householdId },
-    data: input,
-  });
+export async function updateStore(
+  id: string,
+  input: UpdateStoreInput,
+  householdId: string,
+): Promise<StoreResponse> {
+  const [store] = await db
+    .update(stores)
+    .set(input)
+    .where(and(eq(stores.id, id), eq(stores.householdId, householdId)))
+    .returning();
+  if (!store) throw new NotFoundError('Store');
   return {
     id: store.id,
     name: store.name,
@@ -163,28 +164,30 @@ export async function updateStore(id: string, input: UpdateStoreInput, household
 }
 
 export async function deleteStore(id: string, householdId: string): Promise<void> {
-  await prisma.store.delete({ where: { id, householdId } });
+  await db.delete(stores).where(and(eq(stores.id, id), eq(stores.householdId, householdId)));
 }
 
 // ==================== Price Records ====================
 
 export async function recordPrice(input: CreatePriceRecordInput, userId: string): Promise<PriceRecordResponse> {
-  const record = await prisma.priceRecord.create({
-    data: {
+  const [record] = await db
+    .insert(priceRecords)
+    .values({
       productId: input.productId,
       storeId: input.storeId,
       price: input.price,
       currencyCode: input.currencyCode,
       recordedById: userId,
-    },
-    include: { store: true },
-  });
+    })
+    .returning();
+
+  const store = await db.query.stores.findFirst({ where: eq(stores.id, record.storeId) });
 
   return {
     id: record.id,
     productId: record.productId,
     storeId: record.storeId,
-    storeName: record.store.name,
+    storeName: store!.name,
     price: record.price,
     currencyCode: record.currencyCode,
     recordedAt: record.recordedAt.toISOString(),
@@ -196,14 +199,15 @@ export async function getPriceHistory(
   productId: string,
   options: { storeId?: string; limit?: number },
 ): Promise<PriceRecordResponse[]> {
-  const where: Record<string, unknown> = { productId };
-  if (options.storeId) where.storeId = options.storeId;
+  const whereClause = options.storeId
+    ? and(eq(priceRecords.productId, productId), eq(priceRecords.storeId, options.storeId))
+    : eq(priceRecords.productId, productId);
 
-  const records = await prisma.priceRecord.findMany({
-    where,
-    include: { store: true },
-    orderBy: { recordedAt: 'desc' },
-    take: options.limit || 50,
+  const records = await db.query.priceRecords.findMany({
+    where: whereClause,
+    with: { store: true },
+    orderBy: desc(priceRecords.recordedAt),
+    limit: options.limit ?? 50,
   });
 
   return records.map((r) => ({
@@ -219,58 +223,47 @@ export async function getPriceHistory(
 }
 
 export async function comparePrices(productId: string): Promise<PriceRecordResponse[]> {
-  // Get the latest price per store for a product
-  const stores = await prisma.store.findMany({
-    where: {
-      priceRecords: {
-        some: { productId },
-      },
-    },
-  });
+  // Latest price per store: DISTINCT ON ordering by store, then most-recent
+  const latest = await db
+    .selectDistinctOn([priceRecords.storeId], {
+      id: priceRecords.id,
+      productId: priceRecords.productId,
+      storeId: priceRecords.storeId,
+      price: priceRecords.price,
+      currencyCode: priceRecords.currencyCode,
+      recordedAt: priceRecords.recordedAt,
+      recordedById: priceRecords.recordedById,
+      storeName: stores.name,
+    })
+    .from(priceRecords)
+    .innerJoin(stores, eq(stores.id, priceRecords.storeId))
+    .where(eq(priceRecords.productId, productId))
+    .orderBy(priceRecords.storeId, desc(priceRecords.recordedAt));
 
-  const latestPrices: PriceRecordResponse[] = [];
-  for (const store of stores) {
-    const latest = await prisma.priceRecord.findFirst({
-      where: { productId, storeId: store.id },
-      orderBy: { recordedAt: 'desc' },
-      include: { store: true },
-    });
-    if (latest) {
-      latestPrices.push({
-        id: latest.id,
-        productId: latest.productId,
-        storeId: latest.storeId,
-        storeName: latest.store.name,
-        price: latest.price,
-        currencyCode: latest.currencyCode,
-        recordedAt: latest.recordedAt.toISOString(),
-        recordedBy: latest.recordedById,
-      });
-    }
-  }
-
-  return latestPrices.sort((a, b) => a.price - b.price);
+  return latest
+    .map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      storeId: r.storeId,
+      storeName: r.storeName,
+      price: r.price,
+      currencyCode: r.currencyCode,
+      recordedAt: r.recordedAt.toISOString(),
+      recordedBy: r.recordedById,
+    }))
+    .sort((a, b) => a.price - b.price);
 }
 
 // ==================== Helpers ====================
 
-function formatProduct(p: {
-  id: string;
-  barcode: string | null;
-  name: string;
-  brand: string | null;
-  imageUrl: string | null;
-  nutritionalFacts: unknown;
-  nutritionBaseGrams: number;
-  createdAt: Date;
-}): ProductResponse {
+function formatProduct(p: typeof products.$inferSelect): ProductResponse {
   return {
     id: p.id,
     barcode: p.barcode,
     name: p.name,
     brand: p.brand,
     imageUrl: p.imageUrl,
-    nutritionalFacts: p.nutritionalFacts as ProductResponse['nutritionalFacts'],
+    nutritionalFacts: p.nutritionalFacts,
     nutritionBaseGrams: p.nutritionBaseGrams,
     createdAt: p.createdAt.toISOString(),
   };
