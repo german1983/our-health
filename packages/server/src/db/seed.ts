@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '../lib/env.js';
 import bcrypt from 'bcryptjs';
 import { db } from '../lib/db.js';
 import {
