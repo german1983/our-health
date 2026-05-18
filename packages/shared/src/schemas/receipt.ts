@@ -23,11 +23,27 @@ export const confirmReceiptItemSchema = z.object({
 });
 export type ConfirmReceiptItemInput = z.infer<typeof confirmReceiptItemSchema>;
 
+export const setItemTaxCategorySchema = z.object({
+  taxCategoryId: z.string().uuid().nullable(),
+  applyToChain: z.boolean().default(true),
+  applyToReceipt: z.boolean().default(true),
+});
+export type SetItemTaxCategoryInput = z.infer<typeof setItemTaxCategorySchema>;
+
+export interface TaxCategoryResponse {
+  id: string;
+  name: string;
+  rate: number;
+}
+
 export interface ReceiptItemResponse {
   id: string;
   rawName: string;
   rawCode: string | null;
   taxCode: string | null;
+  taxCategoryId: string | null;
+  taxCategoryName: string | null;
+  taxCategoryRate: number | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;

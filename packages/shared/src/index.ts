@@ -114,10 +114,13 @@ export {
   supportedReceiptStores,
   createReceiptSchema,
   confirmReceiptItemSchema,
+  setItemTaxCategorySchema,
   type ReceiptStatus,
   type SupportedReceiptStore,
   type CreateReceiptInput,
   type ConfirmReceiptItemInput,
+  type SetItemTaxCategoryInput,
+  type TaxCategoryResponse,
   type ReceiptItemResponse,
   type ReceiptResponse,
 } from './schemas/receipt.js';

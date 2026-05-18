@@ -1,18 +1,24 @@
-import { and, eq, desc } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
+  chainTaxCodes,
   priceRecords,
   receiptItems,
   receipts,
   storeProductCodes,
   stores,
+  taxCategories,
 } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
-import type { ReceiptItemResponse, ReceiptResponse } from '@personal-budget/shared';
+import type {
+  ReceiptItemResponse,
+  ReceiptResponse,
+  TaxCategoryResponse,
+} from '@personal-budget/shared';
 import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js';
 
 const receiptRelations = {
-  items: { with: { product: true } },
+  items: { with: { product: true, taxCategory: true } },
 } as const;
 
 type ReceiptWithItems = {
@@ -35,12 +41,14 @@ type ReceiptItemWithProduct = {
   rawName: string;
   rawCode: string | null;
   taxCode: string | null;
+  taxCategoryId: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
   matched: boolean;
   productId: string | null;
   product: { name: string } | null;
+  taxCategory: { name: string; rate: number } | null;
 };
 
 export interface CreateReceiptOptions {
@@ -75,10 +83,18 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         });
         productId = mapping?.productId ?? null;
       }
+      let taxCategoryId: string | null = null;
+      if (item.taxCode) {
+        const taxMapping = await db.query.chainTaxCodes.findFirst({
+          where: and(eq(chainTaxCodes.chain, parsed.store), eq(chainTaxCodes.code, item.taxCode)),
+        });
+        taxCategoryId = taxMapping?.taxCategoryId ?? null;
+      }
       return {
         rawName: item.rawName,
         rawCode: item.rawCode ?? null,
         taxCode: item.taxCode ?? null,
+        taxCategoryId,
         quantity: item.quantity,
         unitPrice: item.unitPrice ?? null,
         lineTotal: item.lineTotal,
@@ -192,10 +208,18 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
         });
         productId = mapping?.productId ?? null;
       }
+      let taxCategoryId: string | null = null;
+      if (item.taxCode) {
+        const taxMapping = await db.query.chainTaxCodes.findFirst({
+          where: and(eq(chainTaxCodes.chain, parsed.store), eq(chainTaxCodes.code, item.taxCode)),
+        });
+        taxCategoryId = taxMapping?.taxCategoryId ?? null;
+      }
       return {
         rawName: item.rawName,
         rawCode: item.rawCode ?? null,
         taxCode: item.taxCode ?? null,
+        taxCategoryId,
         quantity: item.quantity,
         unitPrice: item.unitPrice ?? null,
         lineTotal: item.lineTotal,
@@ -293,6 +317,9 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     rawName: item.rawName,
     rawCode: item.rawCode,
     taxCode: item.taxCode,
+    taxCategoryId: item.taxCategoryId,
+    taxCategoryName: item.taxCategory?.name ?? null,
+    taxCategoryRate: item.taxCategory?.rate ?? null,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     lineTotal: item.lineTotal,
@@ -300,6 +327,80 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     productId: item.productId,
     productName: item.product?.name ?? null,
   };
+}
+
+// ==================== Tax Categories ====================
+
+export async function listTaxCategories(): Promise<TaxCategoryResponse[]> {
+  const rows = await db.query.taxCategories.findMany({
+    orderBy: [asc(taxCategories.rate), asc(taxCategories.name)],
+  });
+  return rows.map((c) => ({ id: c.id, name: c.name, rate: c.rate }));
+}
+
+export interface SetItemTaxCategoryArgs {
+  receiptItemId: string;
+  taxCategoryId: string | null;
+  applyToChain: boolean;
+  applyToReceipt: boolean;
+  householdId: string;
+}
+
+export async function setItemTaxCategory(args: SetItemTaxCategoryArgs): Promise<ReceiptResponse> {
+  const item = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, args.receiptItemId),
+    with: { receipt: true },
+  });
+  if (!item || item.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Receipt item');
+  }
+
+  if (args.taxCategoryId) {
+    const cat = await db.query.taxCategories.findFirst({
+      where: eq(taxCategories.id, args.taxCategoryId),
+    });
+    if (!cat) throw new NotFoundError('Tax category');
+  }
+
+  await db.transaction(async (tx) => {
+    // Always update the receipt item itself.
+    await tx
+      .update(receiptItems)
+      .set({ taxCategoryId: args.taxCategoryId })
+      .where(eq(receiptItems.id, item.id));
+
+    // Optionally cascade to siblings in the same receipt that share the
+    // same taxCode (so "fix Walmart J once" updates all six CDMTWIRL rows).
+    if (args.applyToReceipt && item.taxCode) {
+      await tx
+        .update(receiptItems)
+        .set({ taxCategoryId: args.taxCategoryId })
+        .where(
+          and(
+            eq(receiptItems.receiptId, item.receiptId),
+            eq(receiptItems.taxCode, item.taxCode),
+          ),
+        );
+    }
+
+    // Optionally persist the mapping so future receipts from this chain
+    // pick up the corrected category automatically.
+    if (args.applyToChain && item.taxCode && args.taxCategoryId) {
+      await tx
+        .insert(chainTaxCodes)
+        .values({
+          chain: item.receipt.store,
+          code: item.taxCode,
+          taxCategoryId: args.taxCategoryId,
+        })
+        .onConflictDoUpdate({
+          target: [chainTaxCodes.chain, chainTaxCodes.code],
+          set: { taxCategoryId: args.taxCategoryId },
+        });
+    }
+  });
+
+  return getReceipt(item.receiptId, args.householdId);
 }
 
 function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {

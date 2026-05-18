@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   confirmReceiptItemSchema,
   createReceiptSchema,
+  setItemTaxCategorySchema,
   supportedReceiptStores,
 } from '@personal-budget/shared';
 import { authenticate, requireHousehold } from '../../middleware/auth.js';
@@ -9,6 +10,15 @@ import { validate } from '../../middleware/validate.js';
 import * as receiptService from './service.js';
 
 const router = Router();
+
+router.get('/tax-categories', authenticate, async (_req, res, next) => {
+  try {
+    const categories = await receiptService.listTaxCategories();
+    res.json(categories);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post(
   '/',
@@ -99,6 +109,32 @@ router.post(
         userId: req.userId!,
       });
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/items/:itemId/tax-category',
+  authenticate,
+  requireHousehold,
+  validate(setItemTaxCategorySchema),
+  async (req, res, next) => {
+    try {
+      const { taxCategoryId, applyToChain, applyToReceipt } = req.body as {
+        taxCategoryId: string | null;
+        applyToChain: boolean;
+        applyToReceipt: boolean;
+      };
+      const receipt = await receiptService.setItemTaxCategory({
+        receiptItemId: req.params.itemId,
+        taxCategoryId,
+        applyToChain,
+        applyToReceipt,
+        householdId: req.householdId!,
+      });
+      res.json(receipt);
     } catch (err) {
       next(err);
     }

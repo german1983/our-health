@@ -352,6 +352,7 @@ export const receiptItems = pgTable(
     rawName: text('raw_name').notNull(),
     rawCode: text('raw_code'),
     taxCode: text('tax_code'),
+    taxCategoryId: uuid('tax_category_id').references(() => taxCategories.id, { onDelete: 'set null' }),
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),
@@ -362,6 +363,29 @@ export const receiptItems = pgTable(
     index('receipt_items_receipt_idx').on(t.receiptId),
     index('receipt_items_product_idx').on(t.productId),
   ],
+);
+
+export const taxCategories = pgTable('tax_categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull().unique(),
+  rate: doublePrecision('rate').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const chainTaxCodes = pgTable(
+  'chain_tax_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    chain: text('chain').notNull(),
+    code: text('code').notNull(),
+    taxCategoryId: uuid('tax_category_id').notNull().references(() => taxCategories.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex('chain_tax_codes_chain_code_uq').on(t.chain, t.code)],
 );
 
 export const storeProductCodes = pgTable(
@@ -513,6 +537,16 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
 export const receiptItemsRelations = relations(receiptItems, ({ one }) => ({
   receipt: one(receipts, { fields: [receiptItems.receiptId], references: [receipts.id] }),
   product: one(products, { fields: [receiptItems.productId], references: [products.id] }),
+  taxCategory: one(taxCategories, { fields: [receiptItems.taxCategoryId], references: [taxCategories.id] }),
+}));
+
+export const taxCategoriesRelations = relations(taxCategories, ({ many }) => ({
+  receiptItems: many(receiptItems),
+  chainTaxCodes: many(chainTaxCodes),
+}));
+
+export const chainTaxCodesRelations = relations(chainTaxCodes, ({ one }) => ({
+  taxCategory: one(taxCategories, { fields: [chainTaxCodes.taxCategoryId], references: [taxCategories.id] }),
 }));
 
 export const storeProductCodesRelations = relations(storeProductCodes, ({ one }) => ({
