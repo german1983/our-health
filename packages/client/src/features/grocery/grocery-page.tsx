@@ -9,7 +9,12 @@ import { Select } from '@/components/ui/select';
 import { BarcodeScanner } from './barcode-scanner';
 import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import type { ProductResponse, StoreResponse, PriceRecordResponse } from '@personal-budget/shared';
+import type {
+  ChainResponse,
+  ProductResponse,
+  StoreResponse,
+  PriceRecordResponse,
+} from '@personal-budget/shared';
 
 export function GroceryPage() {
   const queryClient = useQueryClient();
@@ -28,6 +33,7 @@ export function GroceryPage() {
   // Store form
   const [storeName, setStoreName] = useState('');
   const [storeLocation, setStoreLocation] = useState('');
+  const [storeChainId, setStoreChainId] = useState<string>('');
 
   const { data: products } = useQuery({
     queryKey: ['products', searchQuery],
@@ -40,6 +46,12 @@ export function GroceryPage() {
   const { data: stores } = useQuery({
     queryKey: ['stores'],
     queryFn: () => api.get<StoreResponse[]>('/stores').then((r) => r.data),
+  });
+
+  const { data: chains } = useQuery({
+    queryKey: ['chains'],
+    queryFn: () => api.get<ChainResponse[]>('/chains').then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
 
   const { data: priceHistory } = useQuery({
@@ -69,12 +81,14 @@ export function GroceryPage() {
   });
 
   const storeMutation = useMutation({
-    mutationFn: (data: { name: string; location?: string }) => api.post('/stores', data),
+    mutationFn: (data: { name: string; location?: string; chainId?: string | null }) =>
+      api.post('/stores', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['stores'] });
       setShowStoreDialog(false);
       setStoreName('');
       setStoreLocation('');
+      setStoreChainId('');
     },
   });
 
@@ -180,7 +194,12 @@ export function GroceryPage() {
               {stores.map((store) => (
                 <div key={store.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                   <div>
-                    <div className="font-medium">{store.name}</div>
+                    <div className="font-medium">
+                      {store.name}
+                      {store.chainName && (
+                        <Badge variant="secondary" className="ml-2">{store.chainName}</Badge>
+                      )}
+                    </div>
                     {store.location && <div className="text-sm text-muted-foreground">{store.location}</div>}
                   </div>
                 </div>
@@ -280,11 +299,27 @@ export function GroceryPage() {
         <DialogHeader>
           <DialogTitle>Add Store</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e: FormEvent) => { e.preventDefault(); storeMutation.mutate({ name: storeName, location: storeLocation || undefined }); }}>
+        <form onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          storeMutation.mutate({
+            name: storeName,
+            location: storeLocation || undefined,
+            chainId: storeChainId || null,
+          });
+        }}>
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Name</label>
-              <Input value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="e.g., Walmart" required />
+              <Input value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="e.g., Walmart Riverside" required />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Chain (optional)</label>
+              <Select value={storeChainId} onChange={(e) => setStoreChainId(e.target.value)}>
+                <option value="">— None —</option>
+                {chains?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Location (optional)</label>

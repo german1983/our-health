@@ -19,7 +19,7 @@
     "db:push": "npm run db:push -w packages/server",
     "db:migrate": "npm run db:migrate -w packages/server",
     "db:seed": "npm run db:seed -w packages/server",
-    "vercel-build": "npm run build:shared && npm run build:client"
+    "vercel-build": "rm -rf packages/shared/dist packages/client/dist && npm run build:shared && npm run build:client"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2"

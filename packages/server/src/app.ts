@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './lib/env.js';
 import express from 'express';
 import cors from 'cors';
 import { errorHandler } from './middleware/error-handler.js';
@@ -12,6 +12,7 @@ import financeRoutes from './modules/finance/routes.js';
 import currencyRoutes from './modules/currency/routes.js';
 import intakeRoutes from './modules/intake/routes.js';
 import receiptRoutes from './modules/receipt/routes.js';
+import chainRoutes from './modules/chain/routes.js';
 
 const app = express();
 
@@ -19,8 +20,10 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   credentials: true,
 }));
-// Raw OCR text can be a few KB per line; allow up to 1 MB to be safe.
-app.use(express.json({ limit: '1mb' }));
+// Receipt images arrive as base64 data URLs after client-side compression,
+// typically ~1 MB. Cap at 5 MB which is just under Vercel's 4.5 MB body
+// limit on the Hobby tier.
+app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -35,6 +38,7 @@ app.use('/api/finance', financeRoutes);
 app.use('/api/currencies', currencyRoutes);
 app.use('/api/intake', intakeRoutes);
 app.use('/api/receipts', receiptRoutes);
+app.use('/api/chains', chainRoutes);
 
 app.use(errorHandler);
 

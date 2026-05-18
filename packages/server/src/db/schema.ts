@@ -90,11 +90,19 @@ export const products = pgTable(
   (t) => [index('products_brand_id_idx').on(t.brandId)],
 );
 
+export const chains = pgTable('chains', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  key: text('key').notNull().unique(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const stores = pgTable(
   'stores',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+    chainId: uuid('chain_id').references(() => chains.id, { onDelete: 'set null' }),
     name: text('name').notNull(),
     location: text('location'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -320,8 +328,8 @@ export const receipts = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
     storeId: uuid('store_id').references(() => stores.id),
+    chainId: uuid('chain_id').references(() => chains.id, { onDelete: 'set null' }),
     uploadedById: uuid('uploaded_by_id').notNull().references(() => users.id),
-    store: text('store').notNull(),
     parserVersion: text('parser_version'),
     rawText: text('raw_text').notNull(),
     parsedData: jsonb('parsed_data').$type<unknown>(),
@@ -351,9 +359,18 @@ export const receiptItems = pgTable(
     productId: uuid('product_id').references(() => products.id),
     rawName: text('raw_name').notNull(),
     rawCode: text('raw_code'),
+    taxCode: text('tax_code'),
+    taxCategoryId: uuid('tax_category_id').references(() => taxCategories.id, { onDelete: 'set null' }),
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),
+    // Snapshot fields, populated on receipt confirmation. Once written
+    // these never change, even if the linked tax_category's rate is
+    // adjusted later — the receipt is a ledger entry of what was true
+    // at the time it was reviewed.
+    taxRate: doublePrecision('tax_rate'),
+    taxAmount: doublePrecision('tax_amount'),
+    finalLineTotal: doublePrecision('final_line_total'),
     matched: boolean('matched').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -361,6 +378,29 @@ export const receiptItems = pgTable(
     index('receipt_items_receipt_idx').on(t.receiptId),
     index('receipt_items_product_idx').on(t.productId),
   ],
+);
+
+export const taxCategories = pgTable('tax_categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull().unique(),
+  rate: doublePrecision('rate').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const chainTaxCodes = pgTable(
+  'chain_tax_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    chainId: uuid('chain_id').notNull().references(() => chains.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    taxCategoryId: uuid('tax_category_id').notNull().references(() => taxCategories.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex('chain_tax_codes_chain_id_code_uq').on(t.chainId, t.code)],
 );
 
 export const storeProductCodes = pgTable(
@@ -426,9 +466,16 @@ export const productsRelations = relations(products, ({ one, many }) => ({
 
 export const storesRelations = relations(stores, ({ one, many }) => ({
   household: one(households, { fields: [stores.householdId], references: [households.id] }),
+  chain: one(chains, { fields: [stores.chainId], references: [chains.id] }),
   priceRecords: many(priceRecords),
   receipts: many(receipts),
   productCodes: many(storeProductCodes),
+}));
+
+export const chainsRelations = relations(chains, ({ many }) => ({
+  stores: many(stores),
+  receipts: many(receipts),
+  taxCodes: many(chainTaxCodes),
 }));
 
 export const priceRecordsRelations = relations(priceRecords, ({ one }) => ({
@@ -505,6 +552,7 @@ export const productServingUnitsRelations = relations(productServingUnits, ({ on
 export const receiptsRelations = relations(receipts, ({ one, many }) => ({
   household: one(households, { fields: [receipts.householdId], references: [households.id] }),
   matchedStore: one(stores, { fields: [receipts.storeId], references: [stores.id] }),
+  chain: one(chains, { fields: [receipts.chainId], references: [chains.id] }),
   uploadedBy: one(users, { fields: [receipts.uploadedById], references: [users.id] }),
   items: many(receiptItems),
 }));
@@ -512,6 +560,17 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
 export const receiptItemsRelations = relations(receiptItems, ({ one }) => ({
   receipt: one(receipts, { fields: [receiptItems.receiptId], references: [receipts.id] }),
   product: one(products, { fields: [receiptItems.productId], references: [products.id] }),
+  taxCategory: one(taxCategories, { fields: [receiptItems.taxCategoryId], references: [taxCategories.id] }),
+}));
+
+export const taxCategoriesRelations = relations(taxCategories, ({ many }) => ({
+  receiptItems: many(receiptItems),
+  chainTaxCodes: many(chainTaxCodes),
+}));
+
+export const chainTaxCodesRelations = relations(chainTaxCodes, ({ one }) => ({
+  chain: one(chains, { fields: [chainTaxCodes.chainId], references: [chains.id] }),
+  taxCategory: one(taxCategories, { fields: [chainTaxCodes.taxCategoryId], references: [taxCategories.id] }),
 }));
 
 export const storeProductCodesRelations = relations(storeProductCodes, ({ one }) => ({

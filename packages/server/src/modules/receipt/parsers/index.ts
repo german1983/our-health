@@ -1,34 +1,15 @@
-import type { ParsedReceipt, ReceiptParser } from './types.js';
-import { walmartParser } from './walmart.js';
+import type { ParsedReceipt } from './types.js';
+import { parseReceiptImage, parseReceiptText } from './openai.js';
 
-const parsersByStore: Record<string, ReceiptParser> = {
-  [walmartParser.storeKey]: walmartParser,
-};
+export async function parseReceiptFromImage(
+  imageDataUrl: string,
+  hint?: string,
+): Promise<{ parsed: ParsedReceipt; transcript: string }> {
+  return parseReceiptImage(imageDataUrl, hint);
+}
 
-export const parsers: ReceiptParser[] = Object.values(parsersByStore);
-
-export function parseReceipt(text: string, hint?: string): ParsedReceipt {
-  if (hint && parsersByStore[hint]) {
-    return parsersByStore[hint].parse(text);
-  }
-
-  let best: { parser: ReceiptParser; score: number } | undefined;
-  for (const parser of parsers) {
-    const score = parser.detect(text);
-    if (!best || score > best.score) {
-      best = { parser, score };
-    }
-  }
-
-  if (best && best.score > 0) {
-    return best.parser.parse(text);
-  }
-
-  return {
-    store: 'UNKNOWN',
-    parserVersion: 'none',
-    items: [],
-  };
+export async function parseReceiptFromText(text: string, hint?: string): Promise<ParsedReceipt> {
+  return parseReceiptText(text, hint);
 }
 
 export type { ParsedReceipt, ParsedReceiptItem, ReceiptParser } from './types.js';

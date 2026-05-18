@@ -2,13 +2,27 @@ import { Router } from 'express';
 import {
   confirmReceiptItemSchema,
   createReceiptSchema,
+  setItemTaxCategorySchema,
   supportedReceiptStores,
+  updateReceiptItemSchema,
+  updateReceiptSchema,
+  type UpdateReceiptInput,
+  type UpdateReceiptItemInput,
 } from '@personal-budget/shared';
 import { authenticate, requireHousehold } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import * as receiptService from './service.js';
 
 const router = Router();
+
+router.get('/tax-categories', authenticate, async (_req, res, next) => {
+  try {
+    const categories = await receiptService.listTaxCategories();
+    res.json(categories);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post(
   '/',
@@ -17,14 +31,14 @@ router.post(
   validate(createReceiptSchema),
   async (req, res, next) => {
     try {
-      const { rawText, storeHint, storeId, currencyCode } = req.body as {
-        rawText: string;
+      const { imageBase64, storeHint, storeId, currencyCode } = req.body as {
+        imageBase64: string;
         storeHint?: string;
         storeId?: string;
         currencyCode: string;
       };
       const receipt = await receiptService.createReceipt({
-        rawText,
+        imageBase64,
         storeHint,
         storeId,
         currencyCode,
@@ -99,6 +113,94 @@ router.post(
         userId: req.userId!,
       });
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/:id',
+  authenticate,
+  requireHousehold,
+  validate(updateReceiptSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.updateReceiptHeader({
+        receiptId: req.params.id,
+        householdId: req.householdId!,
+        data: req.body as UpdateReceiptInput,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/items/:itemId',
+  authenticate,
+  requireHousehold,
+  validate(updateReceiptItemSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.updateReceiptItem({
+        itemId: req.params.itemId,
+        householdId: req.householdId!,
+        data: req.body as UpdateReceiptItemInput,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post('/:id/confirm', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const receipt = await receiptService.confirmReceipt({
+      receiptId: req.params.id,
+      householdId: req.householdId!,
+    });
+    res.json(receipt);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/unlock', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const receipt = await receiptService.unlockReceipt({
+      receiptId: req.params.id,
+      householdId: req.householdId!,
+    });
+    res.json(receipt);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch(
+  '/items/:itemId/tax-category',
+  authenticate,
+  requireHousehold,
+  validate(setItemTaxCategorySchema),
+  async (req, res, next) => {
+    try {
+      const { taxCategoryId, applyToChain, applyToReceipt } = req.body as {
+        taxCategoryId: string | null;
+        applyToChain: boolean;
+        applyToReceipt: boolean;
+      };
+      const receipt = await receiptService.setItemTaxCategory({
+        receiptItemId: req.params.itemId,
+        taxCategoryId,
+        applyToChain,
+        applyToReceipt,
+        householdId: req.householdId!,
+      });
+      res.json(receipt);
     } catch (err) {
       next(err);
     }

@@ -108,16 +108,32 @@ export {
   type ConvertCurrencyResponse,
 } from './schemas/currency.js';
 
+// Chains
+export {
+  createChainSchema,
+  updateChainSchema,
+  type CreateChainInput,
+  type UpdateChainInput,
+  type ChainResponse,
+} from './schemas/chain.js';
+
 // Receipts
 export {
   receiptStatusEnum,
   supportedReceiptStores,
   createReceiptSchema,
   confirmReceiptItemSchema,
+  setItemTaxCategorySchema,
+  updateReceiptSchema,
+  updateReceiptItemSchema,
   type ReceiptStatus,
   type SupportedReceiptStore,
   type CreateReceiptInput,
   type ConfirmReceiptItemInput,
+  type SetItemTaxCategoryInput,
+  type UpdateReceiptInput,
+  type UpdateReceiptItemInput,
+  type TaxCategoryResponse,
   type ReceiptItemResponse,
   type ReceiptResponse,
 } from './schemas/receipt.js';
