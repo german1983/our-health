@@ -13,6 +13,7 @@ import { FinancePage } from '@/features/finance/finance-page';
 import { IntakePage } from '@/features/intake/intake-page';
 import { ReceiptsPage } from '@/features/receipts/receipts-page';
 import { ReceiptDetailPage } from '@/features/receipts/receipt-detail-page';
+import { ChainsPage } from '@/features/chains/chains-page';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +42,7 @@ export default function App() {
               <Route path="/intake" element={<IntakePage />} />
               <Route path="/receipts" element={<ReceiptsPage />} />
               <Route path="/receipts/:id" element={<ReceiptDetailPage />} />
+              <Route path="/chains" element={<ChainsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

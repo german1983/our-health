@@ -23,6 +23,7 @@ export const createProductSchema = z.object({
 export const createStoreSchema = z.object({
   name: z.string().min(1, 'Store name is required').max(200),
   location: z.string().max(500).optional(),
+  chainId: z.string().uuid().nullable().optional(),
 });
 
 export const updateStoreSchema = createStoreSchema.partial();
@@ -75,6 +76,9 @@ export interface StoreResponse {
   id: string;
   name: string;
   location: string | null;
+  chainId: string | null;
+  chainKey: string | null;
+  chainName: string | null;
   createdAt: string;
 }
 

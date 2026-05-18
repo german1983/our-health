@@ -118,30 +118,52 @@ export async function searchBrands(query: string): Promise<BrandResponse[]> {
 
 // ==================== Stores ====================
 
-export async function getStores(householdId: string): Promise<StoreResponse[]> {
-  const result = await db.query.stores.findMany({
-    where: eq(stores.householdId, householdId),
-    orderBy: asc(stores.name),
-  });
-  return result.map((s) => ({
+type StoreWithChain = {
+  id: string;
+  name: string;
+  location: string | null;
+  chainId: string | null;
+  createdAt: Date;
+  chain: { key: string; name: string } | null;
+};
+
+function formatStore(s: StoreWithChain): StoreResponse {
+  return {
     id: s.id,
     name: s.name,
     location: s.location,
+    chainId: s.chainId,
+    chainKey: s.chain?.key ?? null,
+    chainName: s.chain?.name ?? null,
     createdAt: s.createdAt.toISOString(),
-  }));
+  };
+}
+
+export async function getStores(householdId: string): Promise<StoreResponse[]> {
+  const result = (await db.query.stores.findMany({
+    where: eq(stores.householdId, householdId),
+    with: { chain: true },
+    orderBy: asc(stores.name),
+  })) as unknown as StoreWithChain[];
+  return result.map(formatStore);
 }
 
 export async function createStore(input: CreateStoreInput, householdId: string): Promise<StoreResponse> {
-  const [store] = await db
+  const [inserted] = await db
     .insert(stores)
-    .values({ householdId, name: input.name, location: input.location })
-    .returning();
-  return {
-    id: store.id,
-    name: store.name,
-    location: store.location,
-    createdAt: store.createdAt.toISOString(),
-  };
+    .values({
+      householdId,
+      name: input.name,
+      location: input.location,
+      chainId: input.chainId ?? null,
+    })
+    .returning({ id: stores.id });
+
+  const store = (await db.query.stores.findFirst({
+    where: eq(stores.id, inserted.id),
+    with: { chain: true },
+  })) as unknown as StoreWithChain;
+  return formatStore(store);
 }
 
 export async function updateStore(
@@ -149,18 +171,18 @@ export async function updateStore(
   input: UpdateStoreInput,
   householdId: string,
 ): Promise<StoreResponse> {
-  const [store] = await db
+  const [updated] = await db
     .update(stores)
     .set(input)
     .where(and(eq(stores.id, id), eq(stores.householdId, householdId)))
-    .returning();
-  if (!store) throw new NotFoundError('Store');
-  return {
-    id: store.id,
-    name: store.name,
-    location: store.location,
-    createdAt: store.createdAt.toISOString(),
-  };
+    .returning({ id: stores.id });
+  if (!updated) throw new NotFoundError('Store');
+
+  const store = (await db.query.stores.findFirst({
+    where: eq(stores.id, updated.id),
+    with: { chain: true },
+  })) as unknown as StoreWithChain;
+  return formatStore(store);
 }
 
 export async function deleteStore(id: string, householdId: string): Promise<void> {

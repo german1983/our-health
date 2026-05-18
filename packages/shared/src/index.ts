@@ -108,6 +108,15 @@ export {
   type ConvertCurrencyResponse,
 } from './schemas/currency.js';
 
+// Chains
+export {
+  createChainSchema,
+  updateChainSchema,
+  type CreateChainInput,
+  type UpdateChainInput,
+  type ChainResponse,
+} from './schemas/chain.js';
+
 // Receipts
 export {
   receiptStatusEnum,
