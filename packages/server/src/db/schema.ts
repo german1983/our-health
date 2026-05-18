@@ -351,6 +351,7 @@ export const receiptItems = pgTable(
     productId: uuid('product_id').references(() => products.id),
     rawName: text('raw_name').notNull(),
     rawCode: text('raw_code'),
+    taxCode: text('tax_code'),
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),

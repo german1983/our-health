@@ -34,6 +34,7 @@ type ReceiptItemWithProduct = {
   id: string;
   rawName: string;
   rawCode: string | null;
+  taxCode: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
@@ -77,6 +78,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
       return {
         rawName: item.rawName,
         rawCode: item.rawCode ?? null,
+        taxCode: item.taxCode ?? null,
         quantity: item.quantity,
         unitPrice: item.unitPrice ?? null,
         lineTotal: item.lineTotal,
@@ -193,6 +195,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
       return {
         rawName: item.rawName,
         rawCode: item.rawCode ?? null,
+        taxCode: item.taxCode ?? null,
         quantity: item.quantity,
         unitPrice: item.unitPrice ?? null,
         lineTotal: item.lineTotal,
@@ -289,6 +292,7 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     id: item.id,
     rawName: item.rawName,
     rawCode: item.rawCode,
+    taxCode: item.taxCode,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     lineTotal: item.lineTotal,

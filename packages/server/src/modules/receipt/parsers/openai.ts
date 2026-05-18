@@ -12,10 +12,11 @@ For each receipt:
 - items: each line item:
   - rawName: the description AS PRINTED on the receipt.
   - rawCode: the SKU/UPC code printed next to the item (digits only), or null.
+  - taxCode: the single uppercase letter printed at the far right of the line that indicates the line's tax category on this chain's receipt (e.g. "J", "H", "D", "E", "X", "G"), or null if not present. Capture the letter as printed; do NOT interpret what it means.
   - quantity: number (default 1).
   - unitPrice: price per unit, or null.
   - lineTotal: total dollar amount for that line.
-- transcript: a clean plain-text dump of the receipt's meaningful content (header line, items, totals). Skip OCR noise; use one item per line.
+- transcript: a clean plain-text dump of the receipt's meaningful content (header line, items with their tax-code letters, totals). Skip OCR noise; use one item per line.
 
 Rules:
 - Ignore header/footer text that isn't useful (loyalty messages, payment method, change due, "thank you", etc).
@@ -39,11 +40,12 @@ const RESPONSE_SCHEMA = {
         properties: {
           rawName: { type: 'string' },
           rawCode: { type: ['string', 'null'] },
+          taxCode: { type: ['string', 'null'] },
           quantity: { type: 'number' },
           unitPrice: { type: ['number', 'null'] },
           lineTotal: { type: 'number' },
         },
-        required: ['rawName', 'rawCode', 'quantity', 'unitPrice', 'lineTotal'],
+        required: ['rawName', 'rawCode', 'taxCode', 'quantity', 'unitPrice', 'lineTotal'],
         additionalProperties: false,
       },
     },
@@ -62,6 +64,7 @@ interface ModelResponse {
   items: {
     rawName: string;
     rawCode: string | null;
+    taxCode: string | null;
     quantity: number;
     unitPrice: number | null;
     lineTotal: number;
@@ -83,6 +86,7 @@ function toParsedReceipt(model: ModelResponse): { parsed: ParsedReceipt; transcr
   const items: ParsedReceiptItem[] = model.items.map((i) => ({
     rawName: i.rawName,
     rawCode: i.rawCode ?? undefined,
+    taxCode: i.taxCode ?? undefined,
     quantity: i.quantity,
     unitPrice: i.unitPrice ?? undefined,
     lineTotal: i.lineTotal,

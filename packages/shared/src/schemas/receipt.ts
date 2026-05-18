@@ -27,6 +27,7 @@ export interface ReceiptItemResponse {
   id: string;
   rawName: string;
   rawCode: string | null;
+  taxCode: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;

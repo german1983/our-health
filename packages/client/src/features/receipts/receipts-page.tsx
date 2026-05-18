@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -168,7 +169,11 @@ export function ReceiptsPage() {
             <p className="text-sm text-muted-foreground">No receipts yet.</p>
           ) : (
             receipts.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border-b border-border py-2 last:border-0">
+              <Link
+                key={r.id}
+                to={`/receipts/${r.id}`}
+                className="flex items-center justify-between border-b border-border py-2 last:border-0 hover:bg-muted/40 -mx-2 px-2 rounded-sm transition-colors"
+              >
                 <div>
                   <div className="font-medium">
                     {r.store} <Badge variant={r.status === 'PARSED' ? 'default' : 'secondary'}>{r.status}</Badge>
@@ -180,7 +185,7 @@ export function ReceiptsPage() {
                 <div className="text-sm font-mono">
                   {r.total != null ? formatCurrency(r.total, r.currencyCode) : '—'}
                 </div>
-              </div>
+              </Link>
             ))
           )}
         </CardContent>

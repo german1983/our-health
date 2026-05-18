@@ -1,6 +1,7 @@
 export interface ParsedReceiptItem {
   rawName: string;
   rawCode?: string;
+  taxCode?: string;
   quantity: number;
   unitPrice?: number;
   lineTotal: number;
