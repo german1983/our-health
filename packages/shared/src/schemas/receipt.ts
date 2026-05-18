@@ -30,6 +30,28 @@ export const setItemTaxCategorySchema = z.object({
 });
 export type SetItemTaxCategoryInput = z.infer<typeof setItemTaxCategorySchema>;
 
+export const updateReceiptSchema = z
+  .object({
+    subtotal: z.number().nullable().optional(),
+    tax: z.number().nullable().optional(),
+    total: z.number().nullable().optional(),
+    purchasedAt: z.string().datetime().nullable().optional(),
+    storeId: z.string().uuid().nullable().optional(),
+    currencyCode: z.string().length(3).optional(),
+  })
+  .strict();
+export type UpdateReceiptInput = z.infer<typeof updateReceiptSchema>;
+
+export const updateReceiptItemSchema = z
+  .object({
+    rawName: z.string().min(1).optional(),
+    quantity: z.number().optional(),
+    unitPrice: z.number().nullable().optional(),
+    lineTotal: z.number().optional(),
+  })
+  .strict();
+export type UpdateReceiptItemInput = z.infer<typeof updateReceiptItemSchema>;
+
 export interface TaxCategoryResponse {
   id: string;
   name: string;
@@ -47,6 +69,12 @@ export interface ReceiptItemResponse {
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
+  /** Snapshot of the category rate at receipt-confirmation time. */
+  taxRate: number | null;
+  /** Dollars of tax assigned to this line at confirmation. */
+  taxAmount: number | null;
+  /** Pre-tax line total + tax snapshot. */
+  finalLineTotal: number | null;
   matched: boolean;
   productId: string | null;
   productName: string | null;

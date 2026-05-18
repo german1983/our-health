@@ -9,7 +9,8 @@ import {
   stores,
   taxCategories,
 } from '../../db/schema.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import type { UpdateReceiptInput, UpdateReceiptItemInput } from '@personal-budget/shared';
 import type {
   ReceiptItemResponse,
   ReceiptResponse,
@@ -45,6 +46,9 @@ type ReceiptItemWithProduct = {
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
+  taxRate: number | null;
+  taxAmount: number | null;
+  finalLineTotal: number | null;
   matched: boolean;
   productId: string | null;
   product: { name: string } | null;
@@ -323,10 +327,140 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     lineTotal: item.lineTotal,
+    taxRate: item.taxRate,
+    taxAmount: item.taxAmount,
+    finalLineTotal: item.finalLineTotal,
     matched: item.matched,
     productId: item.productId,
     productName: item.product?.name ?? null,
   };
+}
+
+// ==================== Editing & Confirmation ====================
+
+function ensureEditable(status: string): void {
+  if (status === 'REVIEWED') {
+    throw new ConflictError('Receipt is confirmed and locked. Unlock it to edit.');
+  }
+}
+
+export async function updateReceiptHeader(args: {
+  receiptId: string;
+  householdId: string;
+  data: UpdateReceiptInput;
+}): Promise<ReceiptResponse> {
+  const existing = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
+  });
+  if (!existing) throw new NotFoundError('Receipt');
+  ensureEditable(existing.status);
+
+  if (args.data.storeId) {
+    const store = await db.query.stores.findFirst({
+      where: and(eq(stores.id, args.data.storeId), eq(stores.householdId, args.householdId)),
+    });
+    if (!store) throw new NotFoundError('Store');
+  }
+
+  const updates: Record<string, unknown> = { ...args.data };
+  if (args.data.purchasedAt !== undefined) {
+    updates.purchasedAt = args.data.purchasedAt ? new Date(args.data.purchasedAt) : null;
+  }
+
+  await db.update(receipts).set(updates).where(eq(receipts.id, args.receiptId));
+
+  return getReceipt(args.receiptId, args.householdId);
+}
+
+export async function updateReceiptItem(args: {
+  itemId: string;
+  householdId: string;
+  data: UpdateReceiptItemInput;
+}): Promise<ReceiptResponse> {
+  const item = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, args.itemId),
+    with: { receipt: true },
+  });
+  if (!item || item.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Receipt item');
+  }
+  ensureEditable(item.receipt.status);
+
+  await db.update(receiptItems).set(args.data).where(eq(receiptItems.id, args.itemId));
+
+  return getReceipt(item.receiptId, args.householdId);
+}
+
+export async function confirmReceipt(args: {
+  receiptId: string;
+  householdId: string;
+}): Promise<ReceiptResponse> {
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
+    with: { items: { with: { taxCategory: true } } },
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  if (receipt.status === 'REVIEWED') {
+    throw new ConflictError('Receipt is already confirmed');
+  }
+
+  // Distribute the receipt's printed tax across taxed items proportionally
+  // to lineTotal × rate. Snapshot the rate + dollar amount + final price
+  // onto each row so the ledger entry doesn't drift when categories evolve.
+  const weighted = receipt.items.reduce((sum, i) => {
+    const rate = i.taxCategory?.rate ?? 0;
+    return sum + i.lineTotal * rate;
+  }, 0);
+  const printedTax = receipt.tax ?? 0;
+
+  await db.transaction(async (tx) => {
+    for (const item of receipt.items) {
+      const rate = item.taxCategory?.rate ?? 0;
+      const weight = item.lineTotal * rate;
+      const taxAmount = weighted > 0 ? (printedTax * weight) / weighted : 0;
+      const finalLineTotal = item.lineTotal + taxAmount;
+      await tx
+        .update(receiptItems)
+        .set({
+          taxRate: rate,
+          taxAmount,
+          finalLineTotal,
+        })
+        .where(eq(receiptItems.id, item.id));
+    }
+    await tx
+      .update(receipts)
+      .set({ status: 'REVIEWED' })
+      .where(eq(receipts.id, args.receiptId));
+  });
+
+  return getReceipt(args.receiptId, args.householdId);
+}
+
+export async function unlockReceipt(args: {
+  receiptId: string;
+  householdId: string;
+}): Promise<ReceiptResponse> {
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  if (receipt.status !== 'REVIEWED') {
+    return getReceipt(args.receiptId, args.householdId);
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(receiptItems)
+      .set({ taxRate: null, taxAmount: null, finalLineTotal: null })
+      .where(eq(receiptItems.receiptId, args.receiptId));
+    await tx
+      .update(receipts)
+      .set({ status: 'PARSED' })
+      .where(eq(receipts.id, args.receiptId));
+  });
+
+  return getReceipt(args.receiptId, args.householdId);
 }
 
 // ==================== Tax Categories ====================
@@ -354,6 +488,7 @@ export async function setItemTaxCategory(args: SetItemTaxCategoryArgs): Promise<
   if (!item || item.receipt.householdId !== args.householdId) {
     throw new NotFoundError('Receipt item');
   }
+  ensureEditable(item.receipt.status);
 
   if (args.taxCategoryId) {
     const cat = await db.query.taxCategories.findFirst({

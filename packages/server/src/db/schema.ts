@@ -356,6 +356,13 @@ export const receiptItems = pgTable(
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),
+    // Snapshot fields, populated on receipt confirmation. Once written
+    // these never change, even if the linked tax_category's rate is
+    // adjusted later — the receipt is a ledger entry of what was true
+    // at the time it was reviewed.
+    taxRate: doublePrecision('tax_rate'),
+    taxAmount: doublePrecision('tax_amount'),
+    finalLineTotal: doublePrecision('final_line_total'),
     matched: boolean('matched').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
