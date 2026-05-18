@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { areUnitsCompatible, convertUnit } from '@personal-budget/shared';
 import type {
   CreateRecipeInput,
   UpdateRecipeInput,
@@ -38,7 +39,8 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
-    nutritionBaseGrams: ing.product.nutritionBaseGrams,
+    nutritionBaseAmount: ing.product.nutritionBaseAmount,
+    nutritionBaseUnit: ing.product.nutritionBaseUnit,
   }));
 
   const totalNutrition = calculateTotalNutrition(ingredients);
@@ -88,7 +90,8 @@ export async function createRecipe(input: CreateRecipeInput, householdId: string
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
-    nutritionBaseGrams: ing.product.nutritionBaseGrams,
+    nutritionBaseAmount: ing.product.nutritionBaseAmount,
+    nutritionBaseUnit: ing.product.nutritionBaseUnit,
   }));
 
   const totalNutrition = calculateTotalNutrition(ingredients);
@@ -142,6 +145,8 @@ export async function updateRecipe(
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts as NutritionalFacts | null,
+    nutritionBaseAmount: ing.product.nutritionBaseAmount,
+    nutritionBaseUnit: ing.product.nutritionBaseUnit,
   }));
 
   const totalNutrition = calculateTotalNutrition(formattedIngredients);
@@ -212,7 +217,7 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
 // ==================== Nutrition Helpers ====================
 
 function calculateTotalNutrition(
-  ingredients: { quantity: number; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams?: number }[],
+  ingredients: { quantity: number; unit: string; nutritionalFacts: NutritionalFacts | null; nutritionBaseAmount?: number; nutritionBaseUnit?: string }[],
 ): NutritionalFacts {
   const total: NutritionalFacts = {
     calories: 0,
@@ -227,8 +232,19 @@ function calculateTotalNutrition(
 
   for (const ing of ingredients) {
     if (!ing.nutritionalFacts) continue;
-    const baseGrams = ing.nutritionBaseGrams || 100;
-    const factor = ing.quantity / baseGrams;
+    const baseAmount = ing.nutritionBaseAmount || 100;
+    const baseUnit = ing.nutritionBaseUnit || 'g';
+
+    // Try to convert ingredient unit to product's base unit
+    let quantityInBaseUnit: number;
+    if (areUnitsCompatible(ing.unit, baseUnit)) {
+      quantityInBaseUnit = convertUnit(ing.quantity, ing.unit, baseUnit);
+    } else {
+      // Incompatible units — treat quantity as base unit (best effort)
+      quantityInBaseUnit = ing.quantity;
+    }
+
+    const factor = quantityInBaseUnit / baseAmount;
     const nf = ing.nutritionalFacts;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;

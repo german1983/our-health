@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { NutritionalFacts } from './grocery.js';
+import { unitCodeSchema } from '../units.js';
 
 export const mealSlotEnum = z.enum([
   'BREAKFAST',
@@ -17,12 +18,12 @@ export type MealSlot = z.infer<typeof mealSlotEnum>;
 export const createServingUnitSchema = z.object({
   productId: z.string().uuid(),
   name: z.string().min(1, 'Unit name is required').max(50),
-  gramsEquivalent: z.number().positive('Grams equivalent must be positive'),
+  baseUnitEquivalent: z.number().positive('Base unit equivalent must be positive'),
 });
 
 export const updateServingUnitSchema = z.object({
   name: z.string().min(1).max(50).optional(),
-  gramsEquivalent: z.number().positive().optional(),
+  baseUnitEquivalent: z.number().positive().optional(),
 });
 
 export type CreateServingUnitInput = z.infer<typeof createServingUnitSchema>;
@@ -38,6 +39,7 @@ export const createIntakeEntrySchema = z
     recipeId: z.string().uuid().optional(),
     quantity: z.number().positive('Quantity must be positive'),
     servingUnitId: z.string().uuid().optional(),
+    unit: unitCodeSchema.optional(),
     notes: z.string().max(500).optional(),
   })
   .refine((data) => data.productId || data.recipeId, {
@@ -45,14 +47,22 @@ export const createIntakeEntrySchema = z
   })
   .refine((data) => !(data.productId && data.recipeId), {
     message: 'Cannot specify both productId and recipeId',
+  })
+  .refine((data) => !(data.servingUnitId && data.unit), {
+    message: 'Cannot specify both servingUnitId and unit',
   });
 
-export const updateIntakeEntrySchema = z.object({
-  mealSlot: mealSlotEnum.optional(),
-  quantity: z.number().positive().optional(),
-  servingUnitId: z.string().uuid().nullable().optional(),
-  notes: z.string().max(500).nullable().optional(),
-});
+export const updateIntakeEntrySchema = z
+  .object({
+    mealSlot: mealSlotEnum.optional(),
+    quantity: z.number().positive().optional(),
+    servingUnitId: z.string().uuid().nullable().optional(),
+    unit: unitCodeSchema.nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  })
+  .refine((data) => !(data.servingUnitId && data.unit), {
+    message: 'Cannot specify both servingUnitId and unit',
+  });
 
 export type CreateIntakeEntryInput = z.infer<typeof createIntakeEntrySchema>;
 export type UpdateIntakeEntryInput = z.infer<typeof updateIntakeEntrySchema>;
@@ -77,7 +87,7 @@ export interface ServingUnitResponse {
   id: string;
   productId: string;
   name: string;
-  gramsEquivalent: number;
+  baseUnitEquivalent: number;
 }
 
 export interface IntakeEntryResponse {
@@ -90,7 +100,9 @@ export interface IntakeEntryResponse {
   quantity: number;
   servingUnitId: string | null;
   servingUnitName: string | null;
-  calculatedGrams: number | null;
+  unit: string | null;
+  calculatedAmount: number | null;
+  calculatedUnit: string | null;
   nutrition: NutritionalFacts | null;
   notes: string | null;
   sortOrder: number;

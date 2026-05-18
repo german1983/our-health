@@ -79,9 +79,10 @@ model Product {
   brand              String?
   brandId            String?
   imageUrl           String?
-  nutritionalFacts   Json?
-  nutritionBaseGrams Float    @default(100)
-  offRawData         Json?
+  nutritionalFacts    Json?
+  nutritionBaseAmount Float    @default(100)
+  nutritionBaseUnit   String   @default("g")
+  offRawData          Json?
   createdAt          DateTime @default(now())
 
   brandRef            Brand?              @relation(fields: [brandId], references: [id])
@@ -153,7 +154,7 @@ model StorageItem {
   storageSpaceId String
   productId      String
   quantity       Float
-  unit           String    @default("units")
+  unit           String    @default("unit")
   addedAt        DateTime  @default(now())
   expiryDate     DateTime?
   addedById      String
@@ -325,6 +326,7 @@ model IntakeEntry {
   recipeId      String?
   quantity      Float
   servingUnitId String?
+  unit          String?
   notes         String?
   sortOrder     Int       @default(0)
   createdAt     DateTime  @default(now())
@@ -341,8 +343,8 @@ model ProductServingUnit {
   id              String   @id @default(uuid())
   productId       String
   userId          String
-  name            String
-  gramsEquivalent Float
+  name               String
+  baseUnitEquivalent Float
   createdAt       DateTime @default(now())
 
   product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)

@@ -3,9 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
+import { UNITS } from '@personal-budget/shared';
 import type {
   RecipeResponse,
   RecipeDetailResponse,
@@ -13,6 +15,8 @@ import type {
   ProductResponse,
   NutritionalFacts,
 } from '@personal-budget/shared';
+
+const ALL_UNITS = Object.values(UNITS);
 
 interface IngredientForm {
   productId: string;
@@ -99,7 +103,7 @@ export function RecipesPage() {
       productId: product.id,
       productName: product.name,
       quantity: '100',
-      unit: 'g',
+      unit: product.nutritionBaseUnit || 'g',
       notes: '',
     }]);
     setIngredientSearch('');
@@ -318,15 +322,19 @@ export function RecipesPage() {
                         setIngredients(updated);
                       }}
                     />
-                    <Input
-                      className="w-16"
+                    <Select
+                      className="w-24"
                       value={ing.unit}
                       onChange={(e) => {
                         const updated = [...ingredients];
                         updated[i].unit = e.target.value;
                         setIngredients(updated);
                       }}
-                    />
+                    >
+                      {ALL_UNITS.map((u) => (
+                        <option key={u.code} value={u.code}>{u.code}</option>
+                      ))}
+                    </Select>
                     <Button type="button" size="sm" variant="ghost" onClick={() => removeIngredient(i)}>X</Button>
                   </div>
                 ))}

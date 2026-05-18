@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../../lib/errors.js';
+import { convertUnit, areUnitsCompatible } from '@personal-budget/shared';
 import type {
   NutritionalFacts,
   CreateIntakeEntryInput,
@@ -89,6 +90,7 @@ export async function createEntry(userId: string, input: CreateIntakeEntryInput)
       recipeId: input.recipeId,
       quantity: input.quantity,
       servingUnitId: input.servingUnitId,
+      unit: input.unit,
       notes: input.notes,
     },
     include: {
@@ -115,14 +117,24 @@ export async function updateEntry(entryId: string, userId: string, input: Update
     if (!unit || unit.userId !== userId) throw new NotFoundError('Serving unit');
   }
 
+  // When setting a servingUnitId, clear unit; when setting unit, clear servingUnitId
+  const data: Record<string, unknown> = {
+    mealSlot: input.mealSlot,
+    quantity: input.quantity,
+    notes: input.notes,
+  };
+  if (input.servingUnitId !== undefined) {
+    data.servingUnitId = input.servingUnitId;
+    if (input.servingUnitId) data.unit = null;
+  }
+  if (input.unit !== undefined) {
+    data.unit = input.unit;
+    if (input.unit) data.servingUnitId = null;
+  }
+
   const updated = await prisma.intakeEntry.update({
     where: { id: entryId },
-    data: {
-      mealSlot: input.mealSlot,
-      quantity: input.quantity,
-      servingUnitId: input.servingUnitId,
-      notes: input.notes,
-    },
+    data,
     include: {
       product: true,
       recipe: { include: { ingredients: { include: { product: true } } } },
@@ -157,7 +169,7 @@ export async function getServingUnits(userId: string, productId: string): Promis
     id: u.id,
     productId: u.productId,
     name: u.name,
-    gramsEquivalent: u.gramsEquivalent,
+    baseUnitEquivalent: u.baseUnitEquivalent,
   }));
 }
 
@@ -167,7 +179,7 @@ export async function createServingUnit(userId: string, input: CreateServingUnit
       productId: input.productId,
       userId,
       name: input.name,
-      gramsEquivalent: input.gramsEquivalent,
+      baseUnitEquivalent: input.baseUnitEquivalent,
     },
   });
 
@@ -175,7 +187,7 @@ export async function createServingUnit(userId: string, input: CreateServingUnit
     id: unit.id,
     productId: unit.productId,
     name: unit.name,
-    gramsEquivalent: unit.gramsEquivalent,
+    baseUnitEquivalent: unit.baseUnitEquivalent,
   };
 }
 
@@ -193,7 +205,7 @@ export async function updateServingUnit(id: string, userId: string, input: Updat
     id: unit.id,
     productId: unit.productId,
     name: unit.name,
-    gramsEquivalent: unit.gramsEquivalent,
+    baseUnitEquivalent: unit.baseUnitEquivalent,
   };
 }
 
@@ -240,17 +252,19 @@ export async function getSummary(userId: string, from: string, to: string): Prom
 // ==================== Helpers ====================
 
 function calculateEntryNutrition(entry: {
-  product: { nutritionalFacts: unknown; nutritionBaseGrams: number } | null;
-  recipe: { servings: number; ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[] } | null;
+  product: { nutritionalFacts: unknown; nutritionBaseAmount: number; nutritionBaseUnit: string } | null;
+  recipe: { servings: number; ingredients: { quantity: number; unit: string; product: { nutritionalFacts: unknown; nutritionBaseAmount: number; nutritionBaseUnit: string } }[] } | null;
   quantity: number;
-  servingUnit: { gramsEquivalent: number } | null;
-}): { calculatedGrams: number | null; nutrition: NutritionalFacts | null } {
+  servingUnit: { baseUnitEquivalent: number } | null;
+  unit: string | null;
+}): { calculatedAmount: number | null; calculatedUnit: string | null; nutrition: NutritionalFacts | null } {
   // Recipe-based entry: quantity = number of servings
   if (entry.recipe) {
     const totalNutrition = calculateRecipeTotalNutrition(entry.recipe.ingredients);
     const perServing = divideNutrition(totalNutrition, entry.recipe.servings);
     return {
-      calculatedGrams: null,
+      calculatedAmount: null,
+      calculatedUnit: null,
       nutrition: multiplyNutrition(perServing, entry.quantity),
     };
   }
@@ -258,16 +272,28 @@ function calculateEntryNutrition(entry: {
   // Product-based entry
   if (entry.product) {
     const nf = entry.product.nutritionalFacts as NutritionalFacts | null;
-    if (!nf) return { calculatedGrams: null, nutrition: null };
+    if (!nf) return { calculatedAmount: null, calculatedUnit: null, nutrition: null };
 
-    const baseGrams = entry.product.nutritionBaseGrams || 100;
-    const totalGrams = entry.servingUnit
-      ? entry.quantity * entry.servingUnit.gramsEquivalent
-      : entry.quantity;
+    const baseAmount = entry.product.nutritionBaseAmount || 100;
+    const baseUnit = entry.product.nutritionBaseUnit || 'g';
 
-    const factor = totalGrams / baseGrams;
+    let totalInBaseUnit: number;
+
+    if (entry.servingUnit) {
+      // Case 1: Custom serving unit — baseUnitEquivalent is in product's base unit
+      totalInBaseUnit = entry.quantity * entry.servingUnit.baseUnitEquivalent;
+    } else if (entry.unit && areUnitsCompatible(entry.unit, baseUnit)) {
+      // Case 2: Standard unit in same family — convert to product's base unit
+      totalInBaseUnit = convertUnit(entry.quantity, entry.unit, baseUnit);
+    } else {
+      // Case 3: No unit specified or incompatible — quantity is already in product's base unit
+      totalInBaseUnit = entry.quantity;
+    }
+
+    const factor = totalInBaseUnit / baseAmount;
     return {
-      calculatedGrams: Math.round(totalGrams * 10) / 10,
+      calculatedAmount: Math.round(totalInBaseUnit * 10) / 10,
+      calculatedUnit: baseUnit,
       nutrition: roundNutrition({
         calories: (nf.calories ?? 0) * factor,
         fat: (nf.fat ?? 0) * factor,
@@ -281,19 +307,30 @@ function calculateEntryNutrition(entry: {
     };
   }
 
-  return { calculatedGrams: null, nutrition: null };
+  return { calculatedAmount: null, calculatedUnit: null, nutrition: null };
 }
 
 function calculateRecipeTotalNutrition(
-  ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[],
+  ingredients: { quantity: number; unit: string; product: { nutritionalFacts: unknown; nutritionBaseAmount: number; nutritionBaseUnit: string } }[],
 ): NutritionalFacts {
   const total: NutritionalFacts = { calories: 0, fat: 0, saturatedFat: 0, carbs: 0, sugars: 0, fiber: 0, protein: 0, salt: 0 };
 
   for (const ing of ingredients) {
     const nf = ing.product.nutritionalFacts as NutritionalFacts | null;
     if (!nf) continue;
-    const baseGrams = ing.product.nutritionBaseGrams || 100;
-    const factor = ing.quantity / baseGrams;
+    const baseAmount = ing.product.nutritionBaseAmount || 100;
+    const baseUnit = ing.product.nutritionBaseUnit || 'g';
+
+    // Try to convert ingredient unit to product's base unit
+    let quantityInBaseUnit: number;
+    if (areUnitsCompatible(ing.unit, baseUnit)) {
+      quantityInBaseUnit = convertUnit(ing.quantity, ing.unit, baseUnit);
+    } else {
+      // Incompatible units — treat quantity as base unit (best effort)
+      quantityInBaseUnit = ing.quantity;
+    }
+
+    const factor = quantityInBaseUnit / baseAmount;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0) * factor;
@@ -370,16 +407,17 @@ function formatEntry(entry: {
   id: string;
   mealSlot: string;
   productId: string | null;
-  product: { name: string; nutritionalFacts: unknown; nutritionBaseGrams: number } | null;
+  product: { name: string; nutritionalFacts: unknown; nutritionBaseAmount: number; nutritionBaseUnit: string } | null;
   recipeId: string | null;
-  recipe: { name: string; servings: number; ingredients: { quantity: number; product: { nutritionalFacts: unknown; nutritionBaseGrams: number } }[] } | null;
+  recipe: { name: string; servings: number; ingredients: { quantity: number; unit: string; product: { nutritionalFacts: unknown; nutritionBaseAmount: number; nutritionBaseUnit: string } }[] } | null;
   quantity: number;
   servingUnitId: string | null;
-  servingUnit: { name: string; gramsEquivalent: number } | null;
+  servingUnit: { name: string; baseUnitEquivalent: number } | null;
+  unit: string | null;
   notes: string | null;
   sortOrder: number;
 }): IntakeEntryResponse {
-  const { calculatedGrams, nutrition } = calculateEntryNutrition(entry);
+  const { calculatedAmount, calculatedUnit, nutrition } = calculateEntryNutrition(entry);
 
   return {
     id: entry.id,
@@ -391,7 +429,9 @@ function formatEntry(entry: {
     quantity: entry.quantity,
     servingUnitId: entry.servingUnitId,
     servingUnitName: entry.servingUnit?.name ?? null,
-    calculatedGrams,
+    unit: entry.unit,
+    calculatedAmount,
+    calculatedUnit,
     nutrition,
     notes: entry.notes,
     sortOrder: entry.sortOrder,

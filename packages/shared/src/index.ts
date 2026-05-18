@@ -1,3 +1,19 @@
+// Units
+export {
+  UNITS,
+  UNIT_CODES,
+  UNIT_FAMILIES,
+  unitCodeSchema,
+  getUnitsByFamily,
+  areUnitsCompatible,
+  convertUnit,
+  getCompatibleUnits,
+  getOtherFamilyUnits,
+  type UnitFamily,
+  type UnitDefinition,
+  type UnitCode,
+} from './units.js';
+
 // Auth
 export {
   registerSchema,

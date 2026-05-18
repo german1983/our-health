@@ -45,6 +45,7 @@ export async function lookupByBarcode(barcode: string): Promise<ProductResponse>
       brandId,
       imageUrl: offData.imageUrl,
       nutritionalFacts: offData.nutritionalFacts ?? undefined,
+      nutritionBaseUnit: 'g',
       offRawData: offData.rawData as object,
     },
   });
@@ -101,7 +102,8 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
       brandId,
       imageUrl: input.imageUrl,
       nutritionalFacts: input.nutritionalFacts ?? undefined,
-      nutritionBaseGrams: input.nutritionBaseGrams ?? 100,
+      nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
+      nutritionBaseUnit: input.nutritionBaseUnit ?? 'g',
     },
   });
   return formatProduct(product);
@@ -261,7 +263,8 @@ function formatProduct(p: {
   brand: string | null;
   imageUrl: string | null;
   nutritionalFacts: unknown;
-  nutritionBaseGrams: number;
+  nutritionBaseAmount: number;
+  nutritionBaseUnit: string;
   createdAt: Date;
 }): ProductResponse {
   return {
@@ -271,7 +274,8 @@ function formatProduct(p: {
     brand: p.brand,
     imageUrl: p.imageUrl,
     nutritionalFacts: p.nutritionalFacts as ProductResponse['nutritionalFacts'],
-    nutritionBaseGrams: p.nutritionBaseGrams,
+    nutritionBaseAmount: p.nutritionBaseAmount,
+    nutritionBaseUnit: p.nutritionBaseUnit,
     createdAt: p.createdAt.toISOString(),
   };
 }

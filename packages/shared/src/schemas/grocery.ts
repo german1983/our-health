@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { unitCodeSchema } from '../units.js';
 
 export const nutritionalFactsSchema = z.object({
   calories: z.number().min(0).optional(),
@@ -17,7 +18,8 @@ export const createProductSchema = z.object({
   brand: z.string().max(200).optional(),
   imageUrl: z.string().url().optional(),
   nutritionalFacts: nutritionalFactsSchema.optional(),
-  nutritionBaseGrams: z.number().positive().optional(),
+  nutritionBaseAmount: z.number().positive().optional(),
+  nutritionBaseUnit: unitCodeSchema.optional(),
 });
 
 export const createStoreSchema = z.object({
@@ -67,7 +69,8 @@ export interface ProductResponse {
   brand: string | null;
   imageUrl: string | null;
   nutritionalFacts: NutritionalFacts | null;
-  nutritionBaseGrams: number;
+  nutritionBaseAmount: number;
+  nutritionBaseUnit: string;
   createdAt: string;
 }
 

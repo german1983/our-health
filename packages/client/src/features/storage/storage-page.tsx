@@ -8,7 +8,10 @@ import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
 import { formatDate } from '@/lib/utils';
+import { UNITS } from '@personal-budget/shared';
 import type { StorageSpaceResponse, StorageItemResponse, ProductResponse, SpaceType } from '@personal-budget/shared';
+
+const ALL_UNITS = Object.values(UNITS);
 
 const spaceTypeLabels: Record<SpaceType, string> = {
   FRIDGE: 'Fridge',
@@ -33,7 +36,7 @@ export function StoragePage() {
   const [itemProductSearch, setItemProductSearch] = useState('');
   const [itemProductId, setItemProductId] = useState('');
   const [itemQuantity, setItemQuantity] = useState('1');
-  const [itemUnit, setItemUnit] = useState('units');
+  const [itemUnit, setItemUnit] = useState('unit');
   const [itemExpiry, setItemExpiry] = useState('');
 
   const { data: spaces } = useQuery({
@@ -84,7 +87,7 @@ export function StoragePage() {
     setItemProductSearch('');
     setItemProductId('');
     setItemQuantity('1');
-    setItemUnit('units');
+    setItemUnit('unit');
     setItemExpiry('');
   }
 
@@ -243,7 +246,11 @@ export function StoragePage() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Unit</label>
-                <Input value={itemUnit} onChange={(e) => setItemUnit(e.target.value)} />
+                <Select value={itemUnit} onChange={(e) => setItemUnit(e.target.value)}>
+                  {ALL_UNITS.map((u) => (
+                    <option key={u.code} value={u.code}>{u.name} ({u.code})</option>
+                  ))}
+                </Select>
               </div>
             </div>
             <div className="space-y-2">

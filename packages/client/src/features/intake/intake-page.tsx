@@ -6,6 +6,11 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
+import {
+  UNITS,
+  getCompatibleUnits,
+  getOtherFamilyUnits,
+} from '@personal-budget/shared';
 import type {
   DailyLogResponse,
   MealSlot,
@@ -34,6 +39,8 @@ const ALL_MEAL_SLOTS: MealSlot[] = [
   'EVENING_SNACK',
 ];
 
+const ALL_UNITS = Object.values(UNITS);
+
 type AddDialogMode = 'search' | 'newProduct' | 'newUnit';
 
 function toDateString(date: Date): string {
@@ -58,10 +65,12 @@ export function IntakePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedProductName, setSelectedProductName] = useState('');
+  const [selectedProductBaseUnit, setSelectedProductBaseUnit] = useState('g');
   const [selectedRecipeId, setSelectedRecipeId] = useState('');
   const [selectedRecipeName, setSelectedRecipeName] = useState('');
   const [entryQuantity, setEntryQuantity] = useState('100');
   const [entryServingUnitId, setEntryServingUnitId] = useState('');
+  const [entryUnit, setEntryUnit] = useState('');
   const [entryNotes, setEntryNotes] = useState('');
 
   // New product form (inline within add dialog)
@@ -70,7 +79,8 @@ export function IntakePage() {
   const [newProductBrand, setNewProductBrand] = useState('');
   const [brandSearch, setBrandSearch] = useState('');
   const [showBrandDropdown, setShowBrandDropdown] = useState(false);
-  const [newProductBaseGrams, setNewProductBaseGrams] = useState('100');
+  const [newProductBaseAmount, setNewProductBaseAmount] = useState('100');
+  const [newProductBaseUnit, setNewProductBaseUnit] = useState('g');
   const [newProductCalories, setNewProductCalories] = useState('');
   const [newProductFat, setNewProductFat] = useState('');
   const [newProductCarbs, setNewProductCarbs] = useState('');
@@ -83,11 +93,13 @@ export function IntakePage() {
   // New serving unit form (inline within add dialog)
   const [unitName, setUnitName] = useState('');
   const [unitGrams, setUnitGrams] = useState('');
+  const [unitDropdownValue, setUnitDropdownValue] = useState('custom');
 
   // Edit entry dialog
   const [editingEntry, setEditingEntry] = useState<IntakeEntryResponse | null>(null);
   const [editQuantity, setEditQuantity] = useState('');
   const [editServingUnitId, setEditServingUnitId] = useState('');
+  const [editUnit, setEditUnit] = useState('');
   const [editMealSlot, setEditMealSlot] = useState<MealSlot>('BREAKFAST');
 
   // ==================== Queries ====================
@@ -144,6 +156,7 @@ export function IntakePage() {
       recipeId?: string;
       quantity: number;
       servingUnitId?: string;
+      unit?: string;
       notes?: string;
     }) => api.post('/intake/entries', data),
     onSuccess: () => {
@@ -153,7 +166,7 @@ export function IntakePage() {
   });
 
   const updateEntryMutation = useMutation({
-    mutationFn: ({ id, ...data }: { id: string; mealSlot?: MealSlot; quantity?: number; servingUnitId?: string | null }) =>
+    mutationFn: ({ id, ...data }: { id: string; mealSlot?: MealSlot; quantity?: number; servingUnitId?: string | null; unit?: string | null }) =>
       api.patch(`/intake/entries/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['intake', 'log', selectedDate] });
@@ -174,7 +187,8 @@ export function IntakePage() {
       setNewProductName(product.name);
       setNewProductBrand(product.brand ?? '');
       setBrandSearch(product.brand ?? '');
-      setNewProductBaseGrams(String(product.nutritionBaseGrams));
+      setNewProductBaseAmount(String(product.nutritionBaseAmount));
+      setNewProductBaseUnit(product.nutritionBaseUnit);
       setNewProductCalories(nf?.calories != null ? String(nf.calories) : '');
       setNewProductFat(nf?.fat != null ? String(nf.fat) : '');
       setNewProductCarbs(nf?.carbs != null ? String(nf.carbs) : '');
@@ -196,7 +210,8 @@ export function IntakePage() {
       name: string;
       barcode?: string;
       brand?: string;
-      nutritionBaseGrams?: number;
+      nutritionBaseAmount?: number;
+      nutritionBaseUnit?: string;
       nutritionalFacts?: Record<string, number>;
     }) => api.post<ProductResponse>('/products', data).then((r) => r.data),
     onSuccess: (product) => {
@@ -207,15 +222,27 @@ export function IntakePage() {
   });
 
   const createUnitMutation = useMutation({
-    mutationFn: (data: { productId: string; name: string; gramsEquivalent: number }) =>
+    mutationFn: (data: { productId: string; name: string; baseUnitEquivalent: number }) =>
       api.post('/intake/serving-units', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['intake', 'serving-units', selectedProductId] });
       setAddDialogMode('search');
       setUnitName('');
       setUnitGrams('');
+      setUnitDropdownValue('custom');
     },
   });
+
+  // ==================== Computed ====================
+
+  // Units in the same family as the selected product's base unit
+  const compatibleUnits = selectedProductId ? getCompatibleUnits(selectedProductBaseUnit) : [];
+  // Units in other families (for serving unit creation dropdown)
+  const otherFamilyUnits = selectedProductId ? getOtherFamilyUnits(selectedProductBaseUnit) : [];
+
+  // Same for edit dialog
+  const editProductBaseUnit = editingEntry?.calculatedUnit || 'g';
+  const editCompatibleUnits = editingEntry?.productId ? getCompatibleUnits(editProductBaseUnit) : [];
 
   // ==================== Handlers ====================
 
@@ -232,10 +259,12 @@ export function IntakePage() {
     setSearchQuery('');
     setSelectedProductId('');
     setSelectedProductName('');
+    setSelectedProductBaseUnit('g');
     setSelectedRecipeId('');
     setSelectedRecipeName('');
     setEntryQuantity('100');
     setEntryServingUnitId('');
+    setEntryUnit('');
     setEntryNotes('');
     setShowAddDialog(true);
   }
@@ -255,7 +284,8 @@ export function IntakePage() {
     setNewProductName('');
     setNewProductBrand('');
     setBrandSearch('');
-    setNewProductBaseGrams('100');
+    setNewProductBaseAmount('100');
+    setNewProductBaseUnit('g');
     setNewProductCalories('');
     setNewProductFat('');
     setNewProductCarbs('');
@@ -269,6 +299,7 @@ export function IntakePage() {
   function selectCreatedProduct(product: ProductResponse) {
     setSelectedProductId(product.id);
     setSelectedProductName(product.name);
+    setSelectedProductBaseUnit(product.nutritionBaseUnit);
     setSearchQuery(product.name);
     setAddDialogMode('search');
   }
@@ -290,13 +321,14 @@ export function IntakePage() {
     if (newProductFiber) nf.fiber = parseFloat(newProductFiber);
     if (newProductSalt) nf.salt = parseFloat(newProductSalt);
 
-    const baseGrams = parseFloat(newProductBaseGrams);
+    const baseAmount = parseFloat(newProductBaseAmount);
 
     createProductMutation.mutate({
       name: newProductName,
       barcode: newProductBarcode || undefined,
       brand: newProductBrand || undefined,
-      nutritionBaseGrams: baseGrams && baseGrams !== 100 ? baseGrams : undefined,
+      nutritionBaseAmount: baseAmount && baseAmount !== 100 ? baseAmount : undefined,
+      nutritionBaseUnit: newProductBaseUnit !== 'g' ? newProductBaseUnit : undefined,
       nutritionalFacts: Object.keys(nf).length > 0 ? nf : undefined,
     });
   }
@@ -310,6 +342,7 @@ export function IntakePage() {
       recipeId: entryType === 'recipe' ? selectedRecipeId : undefined,
       quantity: parseFloat(entryQuantity),
       servingUnitId: entryServingUnitId || undefined,
+      unit: entryUnit || undefined,
       notes: entryNotes || undefined,
     });
   }
@@ -319,14 +352,45 @@ export function IntakePage() {
     createUnitMutation.mutate({
       productId: selectedProductId,
       name: unitName,
-      gramsEquivalent: parseFloat(unitGrams),
+      baseUnitEquivalent: parseFloat(unitGrams),
     });
+  }
+
+  function handleUnitSelection(value: string) {
+    // Check if it's a serving unit ID (uuid) or a standard unit code
+    const isServingUnit = servingUnits?.some((u) => u.id === value);
+    if (isServingUnit) {
+      setEntryServingUnitId(value);
+      setEntryUnit('');
+    } else if (value) {
+      setEntryUnit(value);
+      setEntryServingUnitId('');
+    } else {
+      // Empty = product's base unit
+      setEntryUnit('');
+      setEntryServingUnitId('');
+    }
+  }
+
+  function handleEditUnitSelection(value: string) {
+    const isServingUnit = editServingUnits?.some((u) => u.id === value);
+    if (isServingUnit) {
+      setEditServingUnitId(value);
+      setEditUnit('');
+    } else if (value) {
+      setEditUnit(value);
+      setEditServingUnitId('');
+    } else {
+      setEditUnit('');
+      setEditServingUnitId('');
+    }
   }
 
   function openEditDialog(entry: IntakeEntryResponse) {
     setEditingEntry(entry);
     setEditQuantity(String(entry.quantity));
     setEditServingUnitId(entry.servingUnitId ?? '');
+    setEditUnit(entry.unit ?? '');
     setEditMealSlot(entry.mealSlot);
   }
 
@@ -338,6 +402,7 @@ export function IntakePage() {
       mealSlot: editMealSlot,
       quantity: parseFloat(editQuantity),
       servingUnitId: editServingUnitId || null,
+      unit: editUnit || null,
     });
   }
 
@@ -350,7 +415,23 @@ export function IntakePage() {
     });
   }
 
+  function handleNewUnitDropdownChange(value: string) {
+    setUnitDropdownValue(value);
+    if (value === 'custom') {
+      setUnitName('');
+    } else {
+      const unitDef = UNITS[value];
+      if (unitDef) {
+        setUnitName(unitDef.name);
+      }
+    }
+  }
+
   const totalNutrition = dailyLog?.totalNutrition;
+
+  // Current selected unit value for the dropdown (servingUnitId takes precedence)
+  const currentUnitValue = entryServingUnitId || entryUnit || '';
+  const currentEditUnitValue = editServingUnitId || editUnit || '';
 
   // ==================== Render: Add dialog content by mode ====================
 
@@ -371,6 +452,7 @@ export function IntakePage() {
                 setSelectedRecipeName('');
                 setEntryQuantity('100');
                 setEntryServingUnitId('');
+                setEntryUnit('');
               }}
             >
               Product
@@ -384,8 +466,10 @@ export function IntakePage() {
                 setSearchQuery('');
                 setSelectedProductId('');
                 setSelectedProductName('');
+                setSelectedProductBaseUnit('g');
                 setEntryQuantity('1');
                 setEntryServingUnitId('');
+                setEntryUnit('');
               }}
             >
               Recipe
@@ -414,6 +498,7 @@ export function IntakePage() {
                         onClick={() => {
                           setSelectedProductId(p.id);
                           setSelectedProductName(p.name);
+                          setSelectedProductBaseUnit(p.nutritionBaseUnit);
                           setSearchQuery(p.name);
                         }}
                       >
@@ -457,10 +542,12 @@ export function IntakePage() {
                   onClick={() => {
                     setSelectedProductId('');
                     setSelectedProductName('');
+                    setSelectedProductBaseUnit('g');
                     setSelectedRecipeId('');
                     setSelectedRecipeName('');
                     setSearchQuery('');
                     setEntryServingUnitId('');
+                    setEntryUnit('');
                   }}
                 >
                   Clear
@@ -489,16 +576,28 @@ export function IntakePage() {
                 <label className="text-sm font-medium">Unit</label>
                 <div className="flex gap-1">
                   <Select
-                    value={entryServingUnitId}
-                    onChange={(e) => setEntryServingUnitId(e.target.value)}
+                    value={currentUnitValue}
+                    onChange={(e) => handleUnitSelection(e.target.value)}
                     className="flex-1"
                   >
-                    <option value="">grams</option>
-                    {servingUnits?.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.gramsEquivalent}g)
-                      </option>
-                    ))}
+                    {/* Same-family standard units */}
+                    <optgroup label="Standard units">
+                      {compatibleUnits.map((u) => (
+                        <option key={u.code} value={u.code}>
+                          {u.name} ({u.code})
+                        </option>
+                      ))}
+                    </optgroup>
+                    {/* Product serving units (cross-family & custom) */}
+                    {servingUnits && servingUnits.length > 0 && (
+                      <optgroup label="Custom serving units">
+                        {servingUnits.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name} ({u.baseUnitEquivalent}{selectedProductBaseUnit})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </Select>
                   <Button
                     type="button"
@@ -508,8 +607,9 @@ export function IntakePage() {
                       setAddDialogMode('newUnit');
                       setUnitName('');
                       setUnitGrams('');
+                      setUnitDropdownValue('custom');
                     }}
-                    title="Add custom unit"
+                    title="Add conversion"
                   >
                     +
                   </Button>
@@ -629,11 +729,19 @@ export function IntakePage() {
                 type="number"
                 step="any"
                 min="0.1"
-                value={newProductBaseGrams}
-                onChange={(e) => setNewProductBaseGrams(e.target.value)}
+                value={newProductBaseAmount}
+                onChange={(e) => setNewProductBaseAmount(e.target.value)}
                 className="w-20"
               />
-              <span className="text-sm text-muted-foreground">g</span>
+              <Select
+                value={newProductBaseUnit}
+                onChange={(e) => setNewProductBaseUnit(e.target.value)}
+                className="w-24"
+              >
+                {ALL_UNITS.map((u) => (
+                  <option key={u.code} value={u.code}>{u.code}</option>
+                ))}
+              </Select>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
@@ -680,23 +788,43 @@ export function IntakePage() {
   }
 
   function renderNewUnitMode() {
+    const selectedUnitLabel = unitDropdownValue !== 'custom' && UNITS[unitDropdownValue]
+      ? UNITS[unitDropdownValue].name
+      : unitName || 'unit';
+
     return (
       <form onSubmit={handleCreateUnit}>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Define a custom unit for <strong>{selectedProductName}</strong>
+            Define a conversion for <strong>{selectedProductName}</strong>
           </p>
           <div className="space-y-2">
-            <label className="text-sm font-medium">Unit Name</label>
-            <Input
-              value={unitName}
-              onChange={(e) => setUnitName(e.target.value)}
-              placeholder="e.g., slice, cup, piece"
-              required
-            />
+            <label className="text-sm font-medium">Unit type</label>
+            <Select
+              value={unitDropdownValue}
+              onChange={(e) => handleNewUnitDropdownChange(e.target.value)}
+            >
+              {otherFamilyUnits.map((u) => (
+                <option key={u.code} value={u.code}>{u.name} ({u.code})</option>
+              ))}
+              <option value="custom">Custom...</option>
+            </Select>
           </div>
+          {unitDropdownValue === 'custom' && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Custom unit name</label>
+              <Input
+                value={unitName}
+                onChange={(e) => setUnitName(e.target.value)}
+                placeholder="e.g., slice, bowl, cookie"
+                required
+              />
+            </div>
+          )}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Grams per 1 unit</label>
+            <label className="text-sm font-medium">
+              {selectedProductBaseUnit} per 1 {selectedUnitLabel}
+            </label>
             <Input
               type="number"
               step="any"
@@ -712,7 +840,7 @@ export function IntakePage() {
           <Button variant="outline" type="button" onClick={() => setAddDialogMode('search')}>
             Back
           </Button>
-          <Button type="submit" disabled={createUnitMutation.isPending}>
+          <Button type="submit" disabled={createUnitMutation.isPending || (unitDropdownValue === 'custom' && !unitName.trim())}>
             Create Unit
           </Button>
         </DialogFooter>
@@ -824,11 +952,13 @@ export function IntakePage() {
                             {entry.quantity}{' '}
                             {entry.servingUnitName
                               ? entry.servingUnitName
-                              : entry.productId
-                                ? 'g'
-                                : 'serving(s)'}
-                            {entry.calculatedGrams != null && entry.servingUnitName && (
-                              <> ({entry.calculatedGrams}g)</>
+                              : entry.unit
+                                ? entry.unit
+                                : entry.productId
+                                  ? (entry.calculatedUnit || 'g')
+                                  : 'serving(s)'}
+                            {entry.calculatedAmount != null && entry.servingUnitName && (
+                              <> ({entry.calculatedAmount}{entry.calculatedUnit || 'g'})</>
                             )}
                           </div>
                         </div>
@@ -899,11 +1029,23 @@ export function IntakePage() {
               {editingEntry?.productId && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Unit</label>
-                  <Select value={editServingUnitId} onChange={(e) => setEditServingUnitId(e.target.value)}>
-                    <option value="">grams</option>
-                    {editServingUnits?.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name} ({u.gramsEquivalent}g)</option>
-                    ))}
+                  <Select value={currentEditUnitValue} onChange={(e) => handleEditUnitSelection(e.target.value)}>
+                    <optgroup label="Standard units">
+                      {editCompatibleUnits.map((u) => (
+                        <option key={u.code} value={u.code}>
+                          {u.name} ({u.code})
+                        </option>
+                      ))}
+                    </optgroup>
+                    {editServingUnits && editServingUnits.length > 0 && (
+                      <optgroup label="Custom serving units">
+                        {editServingUnits.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name} ({u.baseUnitEquivalent}{editProductBaseUnit})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </Select>
                 </div>
               )}

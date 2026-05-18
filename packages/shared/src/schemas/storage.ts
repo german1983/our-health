@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { unitCodeSchema } from '../units.js';
 
 export const spaceTypeEnum = z.enum(['FRIDGE', 'FREEZER', 'PANTRY', 'CABINET', 'OTHER']);
 
@@ -15,13 +16,13 @@ export const createStorageItemSchema = z.object({
   storageSpaceId: z.string().uuid(),
   productId: z.string().uuid(),
   quantity: z.number().positive('Quantity must be positive'),
-  unit: z.string().min(1).max(50).default('units'),
+  unit: unitCodeSchema.default('unit'),
   expiryDate: z.string().datetime().optional(),
 });
 
 export const updateStorageItemSchema = z.object({
   quantity: z.number().positive().optional(),
-  unit: z.string().min(1).max(50).optional(),
+  unit: unitCodeSchema.optional(),
   storageSpaceId: z.string().uuid().optional(),
   expiryDate: z.string().datetime().nullable().optional(),
 });
