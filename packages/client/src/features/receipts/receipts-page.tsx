@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import api from '@/lib/api';
-import { runOcr, disposeOcr, type OcrProgress } from '@/lib/ocr';
+import { compressImageToDataUrl } from '@/lib/image';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type {
   ReceiptResponse,
@@ -20,14 +20,9 @@ export function ReceiptsPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [rawText, setRawText] = useState('');
-  const [ocrRunning, setOcrRunning] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [storeHint, setStoreHint] = useState<SupportedReceiptStore>('WALMART');
   const [storeId, setStoreId] = useState<string>('');
   const [currency, setCurrency] = useState('CAD');
-
-  useEffect(() => () => { void disposeOcr(); }, []);
 
   useEffect(() => {
     if (!file) {
@@ -50,53 +45,38 @@ export function ReceiptsPage() {
   });
 
   const submitMutation = useMutation({
-    mutationFn: (body: {
-      rawText: string;
-      storeHint: SupportedReceiptStore;
-      storeId?: string;
-      currencyCode: string;
-    }) => api.post<ReceiptResponse>('/receipts', body).then((r) => r.data),
+    mutationFn: async (input: { file: File; storeHint: SupportedReceiptStore; storeId?: string; currencyCode: string }) => {
+      const imageBase64 = await compressImageToDataUrl(input.file);
+      const { data } = await api.post<ReceiptResponse>('/receipts', {
+        imageBase64,
+        storeHint: input.storeHint,
+        storeId: input.storeId,
+        currencyCode: input.currencyCode,
+      });
+      return data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['receipts'] });
       setFile(null);
-      setRawText('');
-      setOcrProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     },
   });
 
-  async function handleExtract() {
-    if (!file) return;
-    setOcrRunning(true);
-    setRawText('');
-    try {
-      const text = await runOcr(file, setOcrProgress);
-      setRawText(text);
-    } finally {
-      setOcrRunning(false);
-    }
-  }
-
   function handleSubmit() {
-    if (!rawText.trim()) return;
+    if (!file) return;
     submitMutation.mutate({
-      rawText,
+      file,
       storeHint,
       storeId: storeId || undefined,
       currencyCode: currency,
     });
   }
 
-  const ocrPercent = useMemo(
-    () => (ocrProgress ? Math.round(ocrProgress.progress * 100) : 0),
-    [ocrProgress],
-  );
-
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">Receipts</h1>
       <p className="text-muted-foreground">
-        Snap a receipt; OCR runs on this device and the parsed text is sent to the server.
+        Snap a receipt; the image is compressed on this device and sent to the parser.
       </p>
 
       <Card>
@@ -121,71 +101,51 @@ export function ReceiptsPage() {
             />
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleExtract} disabled={!file || ocrRunning}>
-              {ocrRunning ? `Reading… ${ocrPercent}%` : 'Extract text'}
-            </Button>
-          </div>
-
-          {ocrProgress && ocrRunning && (
-            <div className="text-xs text-muted-foreground">
-              {ocrProgress.status} — {ocrPercent}%
+          {file && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label className="text-sm space-y-1">
+                <span className="text-muted-foreground">Store chain</span>
+                <Select value={storeHint} onChange={(e) => setStoreHint(e.target.value as SupportedReceiptStore)}>
+                  {STORE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                  ))}
+                </Select>
+              </label>
+              <label className="text-sm space-y-1">
+                <span className="text-muted-foreground">Linked store</span>
+                <Select value={storeId} onChange={(e) => setStoreId(e.target.value)}>
+                  <option value="">— none —</option>
+                  {stores?.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </Select>
+              </label>
+              <label className="text-sm space-y-1">
+                <span className="text-muted-foreground">Currency</span>
+                <Select value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())}>
+                  <option value="CAD">CAD</option>
+                  <option value="USD">USD</option>
+                </Select>
+              </label>
             </div>
           )}
 
-          {rawText && (
-            <>
-              <textarea
-                value={rawText}
-                onChange={(e) => setRawText(e.target.value)}
-                rows={12}
-                className="w-full rounded-md border border-border bg-background p-3 font-mono text-xs"
-                placeholder="OCR output will appear here. Edit if needed before saving."
-              />
+          <div className="flex gap-2">
+            <Button onClick={handleSubmit} disabled={!file || submitMutation.isPending}>
+              {submitMutation.isPending ? 'Parsing…' : 'Save receipt'}
+            </Button>
+            {file && (
+              <Button variant="outline" onClick={() => setFile(null)}>
+                Discard
+              </Button>
+            )}
+          </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className="text-sm space-y-1">
-                  <span className="text-muted-foreground">Store chain</span>
-                  <Select value={storeHint} onChange={(e) => setStoreHint(e.target.value as SupportedReceiptStore)}>
-                    {STORE_OPTIONS.map((s) => (
-                      <option key={s} value={s}>{s.replace('_', ' ')}</option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="text-sm space-y-1">
-                  <span className="text-muted-foreground">Linked store</span>
-                  <Select value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-                    <option value="">— none —</option>
-                    {stores?.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="text-sm space-y-1">
-                  <span className="text-muted-foreground">Currency</span>
-                  <Select value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())}>
-                    <option value="CAD">CAD</option>
-                    <option value="USD">USD</option>
-                  </Select>
-                </label>
-              </div>
-
-              <div className="flex gap-2">
-                <Button onClick={handleSubmit} disabled={submitMutation.isPending}>
-                  {submitMutation.isPending ? 'Saving…' : 'Save receipt'}
-                </Button>
-                <Button variant="outline" onClick={() => { setRawText(''); setFile(null); }}>
-                  Discard
-                </Button>
-              </div>
-
-              {submitMutation.error && (
-                <p className="text-sm text-destructive">
-                  {(submitMutation.error as { response?: { data?: { error?: string } } })
-                    .response?.data?.error || 'Failed to save receipt'}
-                </p>
-              )}
-            </>
+          {submitMutation.error && (
+            <p className="text-sm text-destructive">
+              {(submitMutation.error as { response?: { data?: { error?: string } } })
+                .response?.data?.error || 'Failed to save receipt'}
+            </p>
           )}
         </CardContent>
       </Card>

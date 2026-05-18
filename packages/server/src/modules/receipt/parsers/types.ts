@@ -16,6 +16,8 @@ export interface ParsedReceipt {
   items: ParsedReceiptItem[];
 }
 
+// Legacy interface, kept only for the index.ts re-export — no longer
+// implemented now that all parsing goes through OpenAI.
 export interface ReceiptParser {
   storeKey: string;
   detect(text: string): number;

@@ -19,8 +19,10 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   credentials: true,
 }));
-// Raw OCR text can be a few KB per line; allow up to 1 MB to be safe.
-app.use(express.json({ limit: '1mb' }));
+// Receipt images arrive as base64 data URLs after client-side compression,
+// typically ~1 MB. Cap at 5 MB which is just under Vercel's 4.5 MB body
+// limit on the Hobby tier.
+app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

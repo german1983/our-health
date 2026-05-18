@@ -17,14 +17,14 @@ router.post(
   validate(createReceiptSchema),
   async (req, res, next) => {
     try {
-      const { rawText, storeHint, storeId, currencyCode } = req.body as {
-        rawText: string;
+      const { imageBase64, storeHint, storeId, currencyCode } = req.body as {
+        imageBase64: string;
         storeHint?: string;
         storeId?: string;
         currencyCode: string;
       };
       const receipt = await receiptService.createReceipt({
-        rawText,
+        imageBase64,
         storeHint,
         storeId,
         currencyCode,

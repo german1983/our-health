@@ -7,7 +7,10 @@ export const supportedReceiptStores = z.enum(['WALMART', 'LOBLAWS', 'FARM_BOY', 
 export type SupportedReceiptStore = z.infer<typeof supportedReceiptStores>;
 
 export const createReceiptSchema = z.object({
-  rawText: z.string().min(1, 'rawText is required').max(50_000),
+  imageBase64: z
+    .string()
+    .min(1, 'imageBase64 is required')
+    .max(8_000_000, 'image too large'),
   storeId: z.string().uuid().optional(),
   storeHint: supportedReceiptStores.optional(),
   currencyCode: z.string().length(3).default('CAD'),

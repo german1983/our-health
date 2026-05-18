@@ -9,7 +9,7 @@ import {
 } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import type { ReceiptItemResponse, ReceiptResponse } from '@personal-budget/shared';
-import { parseReceipt } from './parsers/index.js';
+import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js';
 
 const receiptRelations = {
   items: { with: { product: true } },
@@ -43,7 +43,7 @@ type ReceiptItemWithProduct = {
 };
 
 export interface CreateReceiptOptions {
-  rawText: string;
+  imageBase64: string;
   storeHint?: string;
   storeId?: string;
   currencyCode: string;
@@ -59,7 +59,11 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
     if (!store) throw new NotFoundError('Store');
   }
 
-  const parsed = await parseReceipt(opts.rawText, opts.storeHint);
+  const dataUrl = opts.imageBase64.startsWith('data:')
+    ? opts.imageBase64
+    : `data:image/jpeg;base64,${opts.imageBase64}`;
+
+  const { parsed, transcript } = await parseReceiptFromImage(dataUrl, opts.storeHint);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
@@ -93,7 +97,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         storeId: opts.storeId,
         store: parsed.store,
         parserVersion: parsed.parserVersion,
-        rawText: opts.rawText,
+        rawText: transcript,
         parsedData: parsed,
         status,
         purchasedAt: parsed.purchasedAt ?? null,
@@ -172,7 +176,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   });
   if (!existing) throw new NotFoundError('Receipt');
 
-  const parsed = await parseReceipt(existing.rawText, opts.storeHint);
+  const parsed = await parseReceiptFromText(existing.rawText, opts.storeHint);
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
