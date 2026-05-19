@@ -23,6 +23,13 @@ export const confirmReceiptItemSchema = z.object({
 });
 export type ConfirmReceiptItemInput = z.infer<typeof confirmReceiptItemSchema>;
 
+export const matchReceiptItemSchema = z.object({
+  productId: z.string().uuid().nullable(),
+  saveChainCode: z.boolean().default(true),
+  applyToReceipt: z.boolean().default(true),
+});
+export type MatchReceiptItemInput = z.infer<typeof matchReceiptItemSchema>;
+
 export const setItemTaxCategorySchema = z.object({
   taxCategoryId: z.string().uuid().nullable(),
   applyToChain: z.boolean().default(true),

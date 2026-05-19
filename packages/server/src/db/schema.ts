@@ -403,18 +403,18 @@ export const chainTaxCodes = pgTable(
   (t) => [uniqueIndex('chain_tax_codes_chain_id_code_uq').on(t.chainId, t.code)],
 );
 
-export const storeProductCodes = pgTable(
-  'store_product_codes',
+export const chainProductCodes = pgTable(
+  'chain_product_codes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    storeId: uuid('store_id').notNull().references(() => stores.id, { onDelete: 'cascade' }),
+    chainId: uuid('chain_id').notNull().references(() => chains.id, { onDelete: 'cascade' }),
     code: text('code').notNull(),
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('store_product_codes_store_code_uq').on(t.storeId, t.code),
-    index('store_product_codes_product_idx').on(t.productId),
+    uniqueIndex('chain_product_codes_chain_id_code_uq').on(t.chainId, t.code),
+    index('chain_product_codes_product_idx').on(t.productId),
   ],
 );
 
@@ -461,7 +461,7 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   intakeEntries: many(intakeEntries),
   productServingUnits: many(productServingUnits),
   receiptItems: many(receiptItems),
-  storeCodes: many(storeProductCodes),
+  chainCodes: many(chainProductCodes),
 }));
 
 export const storesRelations = relations(stores, ({ one, many }) => ({
@@ -469,13 +469,13 @@ export const storesRelations = relations(stores, ({ one, many }) => ({
   chain: one(chains, { fields: [stores.chainId], references: [chains.id] }),
   priceRecords: many(priceRecords),
   receipts: many(receipts),
-  productCodes: many(storeProductCodes),
 }));
 
 export const chainsRelations = relations(chains, ({ many }) => ({
   stores: many(stores),
   receipts: many(receipts),
   taxCodes: many(chainTaxCodes),
+  productCodes: many(chainProductCodes),
 }));
 
 export const priceRecordsRelations = relations(priceRecords, ({ one }) => ({
@@ -573,7 +573,7 @@ export const chainTaxCodesRelations = relations(chainTaxCodes, ({ one }) => ({
   taxCategory: one(taxCategories, { fields: [chainTaxCodes.taxCategoryId], references: [taxCategories.id] }),
 }));
 
-export const storeProductCodesRelations = relations(storeProductCodes, ({ one }) => ({
-  store: one(stores, { fields: [storeProductCodes.storeId], references: [stores.id] }),
-  product: one(products, { fields: [storeProductCodes.productId], references: [products.id] }),
+export const chainProductCodesRelations = relations(chainProductCodes, ({ one }) => ({
+  chain: one(chains, { fields: [chainProductCodes.chainId], references: [chains.id] }),
+  product: one(products, { fields: [chainProductCodes.productId], references: [products.id] }),
 }));

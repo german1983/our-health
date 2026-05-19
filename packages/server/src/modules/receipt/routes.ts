@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   confirmReceiptItemSchema,
   createReceiptSchema,
+  matchReceiptItemSchema,
   setItemTaxCategorySchema,
   supportedReceiptStores,
   updateReceiptItemSchema,
@@ -93,6 +94,33 @@ router.post('/:id/reparse', authenticate, requireHousehold, async (req, res, nex
     next(err);
   }
 });
+
+router.patch(
+  '/items/:itemId/product',
+  authenticate,
+  requireHousehold,
+  validate(matchReceiptItemSchema),
+  async (req, res, next) => {
+    try {
+      const { productId, saveChainCode, applyToReceipt } = req.body as {
+        productId: string | null;
+        saveChainCode: boolean;
+        applyToReceipt: boolean;
+      };
+      const receipt = await receiptService.matchReceiptItem({
+        receiptItemId: req.params.itemId,
+        productId,
+        saveChainCode,
+        applyToReceipt,
+        householdId: req.householdId!,
+        userId: req.userId!,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.post(
   '/items/:itemId/confirm',

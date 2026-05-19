@@ -1,12 +1,12 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
+  chainProductCodes,
   chains,
   chainTaxCodes,
   priceRecords,
   receiptItems,
   receipts,
-  storeProductCodes,
   stores,
   taxCategories,
 } from '../../db/schema.js';
@@ -91,9 +91,9 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
       let productId: string | null = null;
-      if (item.rawCode && opts.storeId) {
-        const mapping = await db.query.storeProductCodes.findFirst({
-          where: and(eq(storeProductCodes.storeId, opts.storeId), eq(storeProductCodes.code, item.rawCode)),
+      if (item.rawCode && chainId) {
+        const mapping = await db.query.chainProductCodes.findFirst({
+          where: and(eq(chainProductCodes.chainId, chainId), eq(chainProductCodes.code, item.rawCode)),
         });
         productId = mapping?.productId ?? null;
       }
@@ -214,11 +214,11 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
       let productId: string | null = null;
-      if (item.rawCode && existing.storeId) {
-        const mapping = await db.query.storeProductCodes.findFirst({
+      if (item.rawCode && chainId) {
+        const mapping = await db.query.chainProductCodes.findFirst({
           where: and(
-            eq(storeProductCodes.storeId, existing.storeId),
-            eq(storeProductCodes.code, item.rawCode),
+            eq(chainProductCodes.chainId, chainId),
+            eq(chainProductCodes.code, item.rawCode),
           ),
         });
         productId = mapping?.productId ?? null;
@@ -273,15 +273,18 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   return getReceipt(existing.id, opts.householdId);
 }
 
-export interface ConfirmItemArgs {
+export interface MatchItemArgs {
   receiptItemId: string;
-  productId: string;
-  saveStoreCode: boolean;
+  productId: string | null;
+  /** Persist the (chain, rawCode) -> productId mapping for future receipts. */
+  saveChainCode: boolean;
+  /** Cascade the match to other lines on this receipt that share the same rawCode. */
+  applyToReceipt: boolean;
   householdId: string;
   userId: string;
 }
 
-export async function confirmReceiptItem(args: ConfirmItemArgs): Promise<ReceiptItemResponse> {
+export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResponse> {
   const item = await db.query.receiptItems.findFirst({
     where: eq(receiptItems.id, args.receiptItemId),
     with: { receipt: true },
@@ -289,41 +292,88 @@ export async function confirmReceiptItem(args: ConfirmItemArgs): Promise<Receipt
   if (!item || item.receipt.householdId !== args.householdId) {
     throw new NotFoundError('Receipt item');
   }
+  ensureEditable(item.receipt.status);
 
-  await db
-    .update(receiptItems)
-    .set({ productId: args.productId, matched: true })
-    .where(eq(receiptItems.id, item.id));
-
-  if (args.saveStoreCode && item.rawCode && item.receipt.storeId) {
-    await db
-      .insert(storeProductCodes)
-      .values({
-        storeId: item.receipt.storeId,
-        code: item.rawCode,
-        productId: args.productId,
-      })
-      .onConflictDoUpdate({
-        target: [storeProductCodes.storeId, storeProductCodes.code],
-        set: { productId: args.productId },
-      });
-  }
-
-  if (item.unitPrice != null && item.receipt.storeId) {
-    await db.insert(priceRecords).values({
-      productId: args.productId,
-      storeId: item.receipt.storeId,
-      price: item.unitPrice,
-      currencyCode: item.receipt.currencyCode,
-      recordedById: args.userId,
+  if (args.productId) {
+    const productId = args.productId;
+    const product = await db.query.products.findFirst({
+      where: (p, { eq: pe }) => pe(p.id, productId),
     });
+    if (!product) throw new NotFoundError('Product');
   }
 
-  const updated = await db.query.receiptItems.findFirst({
-    where: eq(receiptItems.id, item.id),
-    with: { product: true },
+  await db.transaction(async (tx) => {
+    // Update the receipt item itself.
+    await tx
+      .update(receiptItems)
+      .set({ productId: args.productId, matched: !!args.productId })
+      .where(eq(receiptItems.id, item.id));
+
+    // Cascade to siblings sharing the same rawCode on the same receipt.
+    if (args.applyToReceipt && item.rawCode) {
+      await tx
+        .update(receiptItems)
+        .set({ productId: args.productId, matched: !!args.productId })
+        .where(
+          and(eq(receiptItems.receiptId, item.receiptId), eq(receiptItems.rawCode, item.rawCode)),
+        );
+    }
+
+    // Persist the chain-level mapping so future receipts from this chain
+    // auto-match this rawCode without manual intervention.
+    if (
+      args.saveChainCode &&
+      item.rawCode &&
+      args.productId &&
+      item.receipt.chainId
+    ) {
+      await tx
+        .insert(chainProductCodes)
+        .values({
+          chainId: item.receipt.chainId,
+          code: item.rawCode,
+          productId: args.productId,
+        })
+        .onConflictDoUpdate({
+          target: [chainProductCodes.chainId, chainProductCodes.code],
+          set: { productId: args.productId },
+        });
+    }
+
+    // Record a price observation when we have a linked household store.
+    if (args.productId && item.unitPrice != null && item.receipt.storeId) {
+      await tx.insert(priceRecords).values({
+        productId: args.productId,
+        storeId: item.receipt.storeId,
+        price: item.unitPrice,
+        currencyCode: item.receipt.currencyCode,
+        recordedById: args.userId,
+      });
+    }
   });
-  return formatItem(updated as unknown as ReceiptItemWithProduct);
+
+  return getReceipt(item.receiptId, args.householdId);
+}
+
+// Kept for backwards compatibility; thin wrapper around matchReceiptItem.
+export async function confirmReceiptItem(args: {
+  receiptItemId: string;
+  productId: string;
+  saveStoreCode: boolean;
+  householdId: string;
+  userId: string;
+}): Promise<ReceiptItemResponse> {
+  const receipt = await matchReceiptItem({
+    receiptItemId: args.receiptItemId,
+    productId: args.productId,
+    saveChainCode: args.saveStoreCode,
+    applyToReceipt: false,
+    householdId: args.householdId,
+    userId: args.userId,
+  });
+  const updatedItem = receipt.items.find((i) => i.id === args.receiptItemId);
+  if (!updatedItem) throw new NotFoundError('Receipt item');
+  return updatedItem;
 }
 
 function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
