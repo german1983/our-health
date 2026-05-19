@@ -149,6 +149,7 @@ export const storageItems = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     storageSpaceId: uuid('storage_space_id').notNull().references(() => storageSpaces.id, { onDelete: 'cascade' }),
     productId: uuid('product_id').notNull().references(() => products.id),
+    receiptItemId: uuid('receipt_item_id').references((): AnyPgColumn => receiptItems.id, { onDelete: 'set null' }),
     quantity: doublePrecision('quantity').notNull(),
     unit: text('unit').notNull().default('units'),
     addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
@@ -158,6 +159,7 @@ export const storageItems = pgTable(
   (t) => [
     index('storage_items_space_idx').on(t.storageSpaceId),
     index('storage_items_product_idx').on(t.productId),
+    index('storage_items_receipt_item_idx').on(t.receiptItemId),
   ],
 );
 
@@ -351,6 +353,7 @@ export const receipts = pgTable(
     chainId: uuid('chain_id').references(() => chains.id, { onDelete: 'set null' }),
     paymentMethodId: uuid('payment_method_id').references(() => paymentMethods.id, { onDelete: 'set null' }),
     defaultCategoryId: uuid('default_category_id').references(() => categories.id, { onDelete: 'set null' }),
+    defaultStorageSpaceId: uuid('default_storage_space_id').references(() => storageSpaces.id, { onDelete: 'set null' }),
     uploadedById: uuid('uploaded_by_id').notNull().references(() => users.id),
     parserVersion: text('parser_version'),
     rawText: text('raw_text').notNull(),
@@ -384,6 +387,8 @@ export const receiptItems = pgTable(
     taxCode: text('tax_code'),
     taxCategoryId: uuid('tax_category_id').references(() => taxCategories.id, { onDelete: 'set null' }),
     financeCategoryId: uuid('finance_category_id').references(() => categories.id, { onDelete: 'set null' }),
+    storageSpaceId: uuid('storage_space_id').references(() => storageSpaces.id, { onDelete: 'set null' }),
+    expiryDate: timestamp('expiry_date', { withTimezone: true }),
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),
@@ -516,6 +521,7 @@ export const storageItemsRelations = relations(storageItems, ({ one }) => ({
   storageSpace: one(storageSpaces, { fields: [storageItems.storageSpaceId], references: [storageSpaces.id] }),
   product: one(products, { fields: [storageItems.productId], references: [products.id] }),
   addedBy: one(users, { fields: [storageItems.addedById], references: [users.id] }),
+  receiptItem: one(receiptItems, { fields: [storageItems.receiptItemId], references: [receiptItems.id] }),
 }));
 
 export const recipesRelations = relations(recipes, ({ one, many }) => ({
@@ -585,16 +591,19 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
   chain: one(chains, { fields: [receipts.chainId], references: [chains.id] }),
   paymentMethod: one(paymentMethods, { fields: [receipts.paymentMethodId], references: [paymentMethods.id] }),
   defaultCategory: one(categories, { fields: [receipts.defaultCategoryId], references: [categories.id] }),
+  defaultStorageSpace: one(storageSpaces, { fields: [receipts.defaultStorageSpaceId], references: [storageSpaces.id] }),
   uploadedBy: one(users, { fields: [receipts.uploadedById], references: [users.id] }),
   items: many(receiptItems),
   transactions: many(transactions),
 }));
 
-export const receiptItemsRelations = relations(receiptItems, ({ one }) => ({
+export const receiptItemsRelations = relations(receiptItems, ({ one, many }) => ({
   receipt: one(receipts, { fields: [receiptItems.receiptId], references: [receipts.id] }),
   product: one(products, { fields: [receiptItems.productId], references: [products.id] }),
   taxCategory: one(taxCategories, { fields: [receiptItems.taxCategoryId], references: [taxCategories.id] }),
   financeCategory: one(categories, { fields: [receiptItems.financeCategoryId], references: [categories.id] }),
+  storageSpace: one(storageSpaces, { fields: [receiptItems.storageSpaceId], references: [storageSpaces.id] }),
+  storageItems: many(storageItems),
 }));
 
 export const taxCategoriesRelations = relations(taxCategories, ({ many }) => ({
