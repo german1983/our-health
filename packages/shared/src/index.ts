@@ -117,6 +117,17 @@ export {
   type ChainResponse,
 } from './schemas/chain.js';
 
+// Payment methods
+export {
+  paymentMethodTypeEnum,
+  createPaymentMethodSchema,
+  updatePaymentMethodSchema,
+  type PaymentMethodType,
+  type CreatePaymentMethodInput,
+  type UpdatePaymentMethodInput,
+  type PaymentMethodResponse,
+} from './schemas/payment-method.js';
+
 // Receipts
 export {
   receiptStatusEnum,
@@ -125,6 +136,7 @@ export {
   confirmReceiptItemSchema,
   setItemTaxCategorySchema,
   matchReceiptItemSchema,
+  setItemFinanceCategorySchema,
   updateReceiptSchema,
   updateReceiptItemSchema,
   type ReceiptStatus,
@@ -133,6 +145,7 @@ export {
   type ConfirmReceiptItemInput,
   type SetItemTaxCategoryInput,
   type MatchReceiptItemInput,
+  type SetItemFinanceCategoryInput,
   type UpdateReceiptInput,
   type UpdateReceiptItemInput,
   type TaxCategoryResponse,
