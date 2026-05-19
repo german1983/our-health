@@ -101,4 +101,8 @@ See `.env.example` for the full list. Key variables:
 - **Tailwind CSS v4**: Uses `@import "tailwindcss"` and `@theme {}` blocks (no tailwind.config.js)
 - **Shared package**: Must be built (`npm run build:shared`) before server/client can import from it
 - **Client path alias**: `@/*` maps to `./src/*`
-- **Receipt OCR**: Tesseract.js runs in the browser; the server only stores the extracted text and parses it (see `packages/server/src/modules/receipt/parsers/`).
+- **Receipt OCR**: Vision-direct via OpenAI (`gpt-5-mini`, configurable via `OPENAI_MODEL`). Client compresses the photo with Canvas → base64 → sends to `POST /api/receipts`. Server hands the image to the model and stores a `transcript` as `rawText` so reparse works without re-uploading.
+
+## Workflow
+
+- **Pull requests**: when opening a PR, always subscribe to it via `mcp__github__subscribe_pr_activity` so CI status and review comments stream back into the session. Unless the user explicitly says the PR is already handled, subscribe immediately after creation.
