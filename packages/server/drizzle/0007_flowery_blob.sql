@@ -1,0 +1,1 @@
+DROP TABLE "store_product_codes" CASCADE;

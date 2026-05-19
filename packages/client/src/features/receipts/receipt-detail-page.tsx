@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Lock, Unlock } from 'lucide-react';
+import { ChevronLeft, Link2, Link2Off, Lock, Unlock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,28 @@ import type {
   UpdateReceiptInput,
   UpdateReceiptItemInput,
 } from '@personal-budget/shared';
+import { ProductPickerDialog } from './product-picker-dialog';
+
+/** Group identifier for collapsing duplicate lines (same product within the receipt). */
+function groupKeyOf(item: ReceiptItemResponse): string {
+  return item.rawCode ? `code:${item.rawCode}` : `name:${item.rawName.trim().toLowerCase()}`;
+}
+
+interface ItemGroup {
+  key: string;
+  items: ReceiptItemResponse[];
+}
+
+function groupItems(items: ReceiptItemResponse[]): ItemGroup[] {
+  const map = new Map<string, ReceiptItemResponse[]>();
+  for (const item of items) {
+    const k = groupKeyOf(item);
+    const list = map.get(k);
+    if (list) list.push(item);
+    else map.set(k, [item]);
+  }
+  return Array.from(map.entries()).map(([key, items]) => ({ key, items }));
+}
 
 const TOLERANCE = 0.011;
 const TAX_TOLERANCE = 0.05;
@@ -52,6 +74,8 @@ function distributeTax(receipt: ReceiptResponse): Map<string, number> {
 export function ReceiptDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const [grouped, setGrouped] = useState(true);
+  const [pickerItem, setPickerItem] = useState<ReceiptItemResponse | null>(null);
 
   const { data: receipt, isLoading, error } = useQuery({
     queryKey: ['receipt', id],
@@ -109,6 +133,17 @@ export function ReceiptDetailPage() {
   const confirm = useMutation({
     mutationFn: async () => {
       const { data } = await api.post<ReceiptResponse>(`/receipts/${id}/confirm`);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const matchProduct = useMutation({
+    mutationFn: async (input: { itemId: string; productId: string | null }) => {
+      const { data } = await api.patch<ReceiptResponse>(
+        `/receipts/items/${input.itemId}/product`,
+        { productId: input.productId, saveChainCode: true, applyToReceipt: true },
+      );
       return data;
     },
     onSuccess: onReceiptUpdate,
@@ -322,8 +357,16 @@ export function ReceiptDetailPage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Items</CardTitle>
+          <label className="text-xs text-muted-foreground flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={grouped}
+              onChange={(e) => setGrouped(e.target.checked)}
+            />
+            Group duplicate lines
+          </label>
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
@@ -336,25 +379,67 @@ export function ReceiptDetailPage() {
                 <th className="px-4 py-2 text-right">Qty</th>
                 <th className="px-4 py-2 text-right">Pre-tax</th>
                 <th className="px-4 py-2 text-right">All-in</th>
+                <th className="px-4 py-2 text-center w-8" />
               </tr>
             </thead>
             <tbody>
-              {receipt.items.map((item) => (
-                <ItemRow
-                  key={item.id}
-                  item={item}
-                  currencyCode={receipt.currencyCode}
-                  taxShare={taxShares.get(item.id) ?? 0}
-                  categories={taxCategories ?? []}
-                  locked={locked}
-                  catPending={setCategory.isPending && setCategory.variables?.itemId === item.id}
-                  fieldPending={patchItem.isPending && patchItem.variables?.itemId === item.id}
-                  onChangeCategory={(taxCategoryId) =>
-                    setCategory.mutate({ itemId: item.id, taxCategoryId })
-                  }
-                  onPatch={(data) => patchItem.mutate({ itemId: item.id, data })}
-                />
-              ))}
+              {grouped
+                ? groupItems(receipt.items).map((group) =>
+                    group.items.length === 1 ? (
+                      <ItemRow
+                        key={group.key}
+                        item={group.items[0]}
+                        currencyCode={receipt.currencyCode}
+                        taxShare={taxShares.get(group.items[0].id) ?? 0}
+                        categories={taxCategories ?? []}
+                        locked={locked}
+                        catPending={setCategory.isPending && setCategory.variables?.itemId === group.items[0].id}
+                        fieldPending={patchItem.isPending && patchItem.variables?.itemId === group.items[0].id}
+                        matchPending={matchProduct.isPending && matchProduct.variables?.itemId === group.items[0].id}
+                        onChangeCategory={(taxCategoryId) =>
+                          setCategory.mutate({ itemId: group.items[0].id, taxCategoryId })
+                        }
+                        onPatch={(data) => patchItem.mutate({ itemId: group.items[0].id, data })}
+                        onMatch={() => setPickerItem(group.items[0])}
+                        onUnmatch={() => matchProduct.mutate({ itemId: group.items[0].id, productId: null })}
+                      />
+                    ) : (
+                      <GroupRow
+                        key={group.key}
+                        group={group}
+                        currencyCode={receipt.currencyCode}
+                        taxShares={taxShares}
+                        categories={taxCategories ?? []}
+                        locked={locked}
+                        catPending={setCategory.isPending && group.items.some((i) => setCategory.variables?.itemId === i.id)}
+                        matchPending={matchProduct.isPending && group.items.some((i) => matchProduct.variables?.itemId === i.id)}
+                        onChangeCategory={(taxCategoryId) =>
+                          setCategory.mutate({ itemId: group.items[0].id, taxCategoryId })
+                        }
+                        onMatch={() => setPickerItem(group.items[0])}
+                        onUnmatch={() => matchProduct.mutate({ itemId: group.items[0].id, productId: null })}
+                      />
+                    ),
+                  )
+                : receipt.items.map((item) => (
+                    <ItemRow
+                      key={item.id}
+                      item={item}
+                      currencyCode={receipt.currencyCode}
+                      taxShare={taxShares.get(item.id) ?? 0}
+                      categories={taxCategories ?? []}
+                      locked={locked}
+                      catPending={setCategory.isPending && setCategory.variables?.itemId === item.id}
+                      fieldPending={patchItem.isPending && patchItem.variables?.itemId === item.id}
+                      matchPending={matchProduct.isPending && matchProduct.variables?.itemId === item.id}
+                      onChangeCategory={(taxCategoryId) =>
+                        setCategory.mutate({ itemId: item.id, taxCategoryId })
+                      }
+                      onPatch={(data) => patchItem.mutate({ itemId: item.id, data })}
+                      onMatch={() => setPickerItem(item)}
+                      onUnmatch={() => matchProduct.mutate({ itemId: item.id, productId: null })}
+                    />
+                  ))}
             </tbody>
             <tfoot className="border-t border-border text-sm">
               <tr>
@@ -362,18 +447,21 @@ export function ReceiptDetailPage() {
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.subtotal != null ? formatCurrency(receipt.subtotal, receipt.currencyCode) : '—'}
                 </td>
+                <td />
               </tr>
               <tr>
                 <td className="px-4 py-2 text-right text-muted-foreground" colSpan={6}>Tax</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.tax != null ? formatCurrency(receipt.tax, receipt.currencyCode) : '—'}
                 </td>
+                <td />
               </tr>
               <tr>
                 <td className="px-4 py-2 text-right font-medium" colSpan={6}>Total</td>
                 <td className="px-4 py-2 text-right font-mono font-medium">
                   {receipt.total != null ? formatCurrency(receipt.total, receipt.currencyCode) : '—'}
                 </td>
+                <td />
               </tr>
             </tfoot>
           </table>
@@ -411,15 +499,28 @@ export function ReceiptDetailPage() {
         )}
       </div>
 
-      {(confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error) && (
+      {(confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || matchProduct.error) && (
         <p className="text-sm text-destructive">
           {(
-            (confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error) as {
+            (confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || matchProduct.error) as {
               response?: { data?: { error?: string } };
             }
           ).response?.data?.error || 'Update failed'}
         </p>
       )}
+
+      <ProductPickerDialog
+        open={pickerItem !== null}
+        initialQuery={pickerItem?.rawName ?? ''}
+        initialBarcode={pickerItem?.rawCode ?? null}
+        onClose={() => setPickerItem(null)}
+        onSelect={(productId) => {
+          if (pickerItem) {
+            matchProduct.mutate({ itemId: pickerItem.id, productId });
+          }
+          setPickerItem(null);
+        }}
+      />
     </div>
   );
 }
@@ -432,8 +533,11 @@ interface ItemRowProps {
   locked: boolean;
   catPending: boolean;
   fieldPending: boolean;
+  matchPending: boolean;
   onChangeCategory: (taxCategoryId: string | null) => void;
   onPatch: (data: UpdateReceiptItemInput) => void;
+  onMatch: () => void;
+  onUnmatch: () => void;
 }
 
 function ItemRow({
@@ -444,15 +548,16 @@ function ItemRow({
   locked,
   catPending,
   fieldPending,
+  matchPending,
   onChangeCategory,
   onPatch,
+  onMatch,
+  onUnmatch,
 }: ItemRowProps) {
   const [catValue, setCatValue] = useState(item.taxCategoryId ?? '');
   if (catValue !== (item.taxCategoryId ?? '') && !catPending) {
     setCatValue(item.taxCategoryId ?? '');
   }
-
-  const displayName = item.productName ?? item.rawName;
   const taxRateForRow = locked ? item.taxRate : item.taxCategoryRate;
   const allInPrice =
     locked && item.finalLineTotal != null
@@ -462,8 +567,15 @@ function ItemRow({
   return (
     <tr className={cn('border-b border-border last:border-0', fieldPending && 'opacity-60')}>
       <td className="px-4 py-2">
-        {locked ? (
-          <span>{displayName}</span>
+        {item.productName ? (
+          <div>
+            <div className="font-medium">{item.productName}</div>
+            <div className="text-xs text-muted-foreground">
+              receipt: {item.rawName}
+            </div>
+          </div>
+        ) : locked ? (
+          <span>{item.rawName}</span>
         ) : (
           <Input
             defaultValue={item.rawName}
@@ -538,6 +650,152 @@ function ItemRow({
           </span>
         ) : (
           formatCurrency(allInPrice, currencyCode)
+        )}
+      </td>
+      <td className="px-2 py-2 text-center">
+        {locked ? null : item.productId ? (
+          <button
+            type="button"
+            onClick={onUnmatch}
+            disabled={matchPending}
+            title="Unlink product"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Link2Off className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onMatch}
+            disabled={matchPending}
+            title="Match to a product"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Link2 className="h-4 w-4" />
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+interface GroupRowProps {
+  group: ItemGroup;
+  currencyCode: string;
+  taxShares: Map<string, number>;
+  categories: TaxCategoryResponse[];
+  locked: boolean;
+  catPending: boolean;
+  matchPending: boolean;
+  onChangeCategory: (taxCategoryId: string | null) => void;
+  onMatch: () => void;
+  onUnmatch: () => void;
+}
+
+function GroupRow({
+  group,
+  currencyCode,
+  taxShares,
+  categories,
+  locked,
+  catPending,
+  matchPending,
+  onChangeCategory,
+  onMatch,
+  onUnmatch,
+}: GroupRowProps) {
+  const first = group.items[0];
+  const count = group.items.length;
+  const totalQty = group.items.reduce((s, i) => s + i.quantity, 0);
+  const totalPreTax = group.items.reduce((s, i) => s + i.lineTotal, 0);
+  const totalTaxShare = group.items.reduce((s, i) => s + (taxShares.get(i.id) ?? 0), 0);
+  const totalAllIn =
+    locked && group.items.every((i) => i.finalLineTotal != null)
+      ? group.items.reduce((s, i) => s + (i.finalLineTotal ?? 0), 0)
+      : totalPreTax + totalTaxShare;
+
+  const [catValue, setCatValue] = useState(first.taxCategoryId ?? '');
+  if (catValue !== (first.taxCategoryId ?? '') && !catPending) {
+    setCatValue(first.taxCategoryId ?? '');
+  }
+
+  const taxRateForRow = locked ? first.taxRate : first.taxCategoryRate;
+
+  return (
+    <tr className="border-b border-border last:border-0">
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-2">
+          {first.productName ? (
+            <div>
+              <div className="font-medium">{first.productName}</div>
+              <div className="text-xs text-muted-foreground">receipt: {first.rawName}</div>
+            </div>
+          ) : (
+            <span>{first.rawName}</span>
+          )}
+          <Badge variant="secondary">× {count}</Badge>
+        </div>
+      </td>
+      <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{first.rawCode ?? '—'}</td>
+      <td className="px-4 py-2 text-center">
+        {first.taxCode ? (
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded border border-border font-mono text-xs">
+            {first.taxCode}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">
+            {first.taxCategoryName ?? '—'}
+            {taxRateForRow != null && taxRateForRow > 0 && (
+              <span className="ml-1 font-mono">({(taxRateForRow * 100).toFixed(2)}%)</span>
+            )}
+          </span>
+        ) : (
+          <Select
+            value={catValue}
+            disabled={catPending}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setCatValue(e.target.value);
+              onChangeCategory(next);
+            }}
+            className="h-8 text-xs"
+          >
+            <option value="">— Unassigned —</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </Select>
+        )}
+      </td>
+      <td className="px-4 py-2 text-right font-mono">{totalQty}</td>
+      <td className="px-4 py-2 text-right font-mono">{formatCurrency(totalPreTax, currencyCode)}</td>
+      <td className="px-4 py-2 text-right font-mono">{formatCurrency(totalAllIn, currencyCode)}</td>
+      <td className="px-2 py-2 text-center">
+        {locked ? null : first.productId ? (
+          <button
+            type="button"
+            onClick={onUnmatch}
+            disabled={matchPending}
+            title="Unlink product (cascades to all rows in this group)"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Link2Off className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onMatch}
+            disabled={matchPending}
+            title="Match to a product (cascades to all rows in this group)"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Link2 className="h-4 w-4" />
+          </button>
         )}
       </td>
     </tr>
