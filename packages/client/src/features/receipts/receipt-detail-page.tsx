@@ -11,6 +11,8 @@ import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import type {
+  CategoryResponse,
+  PaymentMethodResponse,
   ReceiptItemResponse,
   ReceiptResponse,
   StoreResponse,
@@ -19,6 +21,19 @@ import type {
   UpdateReceiptItemInput,
 } from '@personal-budget/shared';
 import { ProductPickerDialog } from './product-picker-dialog';
+
+/** Flatten the household category tree to an ordered list with depth-aware names. */
+function flattenCategories(tree: CategoryResponse[]): CategoryResponse[] {
+  const out: CategoryResponse[] = [];
+  function walk(nodes: CategoryResponse[], depth: number) {
+    for (const n of nodes) {
+      out.push({ ...n, name: `${'— '.repeat(depth)}${n.name}` });
+      if (n.children) walk(n.children, depth + 1);
+    }
+  }
+  walk(tree, 0);
+  return out;
+}
 
 /** Group identifier for collapsing duplicate lines (same product within the receipt). */
 function groupKeyOf(item: ReceiptItemResponse): string {
@@ -95,6 +110,22 @@ export function ReceiptDetailPage() {
     staleTime: 5 * 60_000,
   });
 
+  const { data: paymentMethods } = useQuery({
+    queryKey: ['payment-methods'],
+    queryFn: () => api.get<PaymentMethodResponse[]>('/payment-methods').then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  const { data: categoryTree } = useQuery({
+    queryKey: ['finance-categories'],
+    queryFn: () => api.get<CategoryResponse[]>('/finance/categories').then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+  const flatCategories = useMemo(
+    () => (categoryTree ? flattenCategories(categoryTree).filter((c) => c.type === 'EXPENSE') : []),
+    [categoryTree],
+  );
+
   const onReceiptUpdate = (updated: ReceiptResponse) => {
     queryClient.setQueryData(['receipt', id], updated);
     queryClient.invalidateQueries({ queryKey: ['receipts'] });
@@ -133,6 +164,17 @@ export function ReceiptDetailPage() {
   const confirm = useMutation({
     mutationFn: async () => {
       const { data } = await api.post<ReceiptResponse>(`/receipts/${id}/confirm`);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const setFinanceCategory = useMutation({
+    mutationFn: async (input: { itemId: string; financeCategoryId: string | null }) => {
+      const { data } = await api.patch<ReceiptResponse>(
+        `/receipts/items/${input.itemId}/finance-category`,
+        { financeCategoryId: input.financeCategoryId, applyToReceipt: true },
+      );
       return data;
     },
     onSuccess: onReceiptUpdate,
@@ -295,6 +337,30 @@ export function ReceiptDetailPage() {
               onSave={(v) => patchReceipt.mutate({ total: v })}
             />
           </Field>
+          <Field label="Payment method">
+            <Select
+              value={receipt.paymentMethodId ?? ''}
+              disabled={locked}
+              onChange={(e) => patchReceipt.mutate({ paymentMethodId: e.target.value || null })}
+            >
+              <option value="">— None —</option>
+              {paymentMethods?.filter((m) => !m.archived).map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Default expense category">
+            <Select
+              value={receipt.defaultCategoryId ?? ''}
+              disabled={locked}
+              onChange={(e) => patchReceipt.mutate({ defaultCategoryId: e.target.value || null })}
+            >
+              <option value="">— None —</option>
+              {flatCategories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
+          </Field>
         </CardContent>
       </Card>
 
@@ -375,7 +441,8 @@ export function ReceiptDetailPage() {
                 <th className="px-4 py-2">Name</th>
                 <th className="px-4 py-2">Code</th>
                 <th className="px-4 py-2 text-center">Tax</th>
-                <th className="px-4 py-2">Category</th>
+                <th className="px-4 py-2">Tax category</th>
+                <th className="px-4 py-2">Expense category</th>
                 <th className="px-4 py-2 text-right">Qty</th>
                 <th className="px-4 py-2 text-right">Pre-tax</th>
                 <th className="px-4 py-2 text-right">All-in</th>
@@ -392,12 +459,17 @@ export function ReceiptDetailPage() {
                         currencyCode={receipt.currencyCode}
                         taxShare={taxShares.get(group.items[0].id) ?? 0}
                         categories={taxCategories ?? []}
+                        financeCategories={flatCategories}
                         locked={locked}
                         catPending={setCategory.isPending && setCategory.variables?.itemId === group.items[0].id}
+                        financeCatPending={setFinanceCategory.isPending && setFinanceCategory.variables?.itemId === group.items[0].id}
                         fieldPending={patchItem.isPending && patchItem.variables?.itemId === group.items[0].id}
                         matchPending={matchProduct.isPending && matchProduct.variables?.itemId === group.items[0].id}
                         onChangeCategory={(taxCategoryId) =>
                           setCategory.mutate({ itemId: group.items[0].id, taxCategoryId })
+                        }
+                        onChangeFinanceCategory={(financeCategoryId) =>
+                          setFinanceCategory.mutate({ itemId: group.items[0].id, financeCategoryId })
                         }
                         onPatch={(data) => patchItem.mutate({ itemId: group.items[0].id, data })}
                         onMatch={() => setPickerItem(group.items[0])}
@@ -410,11 +482,16 @@ export function ReceiptDetailPage() {
                         currencyCode={receipt.currencyCode}
                         taxShares={taxShares}
                         categories={taxCategories ?? []}
+                        financeCategories={flatCategories}
                         locked={locked}
                         catPending={setCategory.isPending && group.items.some((i) => setCategory.variables?.itemId === i.id)}
+                        financeCatPending={setFinanceCategory.isPending && group.items.some((i) => setFinanceCategory.variables?.itemId === i.id)}
                         matchPending={matchProduct.isPending && group.items.some((i) => matchProduct.variables?.itemId === i.id)}
                         onChangeCategory={(taxCategoryId) =>
                           setCategory.mutate({ itemId: group.items[0].id, taxCategoryId })
+                        }
+                        onChangeFinanceCategory={(financeCategoryId) =>
+                          setFinanceCategory.mutate({ itemId: group.items[0].id, financeCategoryId })
                         }
                         onMatch={() => setPickerItem(group.items[0])}
                         onUnmatch={() => matchProduct.mutate({ itemId: group.items[0].id, productId: null })}
@@ -428,12 +505,17 @@ export function ReceiptDetailPage() {
                       currencyCode={receipt.currencyCode}
                       taxShare={taxShares.get(item.id) ?? 0}
                       categories={taxCategories ?? []}
+                      financeCategories={flatCategories}
                       locked={locked}
                       catPending={setCategory.isPending && setCategory.variables?.itemId === item.id}
+                      financeCatPending={setFinanceCategory.isPending && setFinanceCategory.variables?.itemId === item.id}
                       fieldPending={patchItem.isPending && patchItem.variables?.itemId === item.id}
                       matchPending={matchProduct.isPending && matchProduct.variables?.itemId === item.id}
                       onChangeCategory={(taxCategoryId) =>
                         setCategory.mutate({ itemId: item.id, taxCategoryId })
+                      }
+                      onChangeFinanceCategory={(financeCategoryId) =>
+                        setFinanceCategory.mutate({ itemId: item.id, financeCategoryId })
                       }
                       onPatch={(data) => patchItem.mutate({ itemId: item.id, data })}
                       onMatch={() => setPickerItem(item)}
@@ -443,21 +525,21 @@ export function ReceiptDetailPage() {
             </tbody>
             <tfoot className="border-t border-border text-sm">
               <tr>
-                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={6}>Subtotal</td>
+                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={7}>Subtotal</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.subtotal != null ? formatCurrency(receipt.subtotal, receipt.currencyCode) : '—'}
                 </td>
                 <td />
               </tr>
               <tr>
-                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={6}>Tax</td>
+                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={7}>Tax</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.tax != null ? formatCurrency(receipt.tax, receipt.currencyCode) : '—'}
                 </td>
                 <td />
               </tr>
               <tr>
-                <td className="px-4 py-2 text-right font-medium" colSpan={6}>Total</td>
+                <td className="px-4 py-2 text-right font-medium" colSpan={7}>Total</td>
                 <td className="px-4 py-2 text-right font-mono font-medium">
                   {receipt.total != null ? formatCurrency(receipt.total, receipt.currencyCode) : '—'}
                 </td>
@@ -499,10 +581,10 @@ export function ReceiptDetailPage() {
         )}
       </div>
 
-      {(confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || matchProduct.error) && (
+      {(confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || setFinanceCategory.error || matchProduct.error) && (
         <p className="text-sm text-destructive">
           {(
-            (confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || matchProduct.error) as {
+            (confirm.error || unlock.error || patchReceipt.error || patchItem.error || setCategory.error || setFinanceCategory.error || matchProduct.error) as {
               response?: { data?: { error?: string } };
             }
           ).response?.data?.error || 'Update failed'}
@@ -530,11 +612,14 @@ interface ItemRowProps {
   currencyCode: string;
   taxShare: number;
   categories: TaxCategoryResponse[];
+  financeCategories: CategoryResponse[];
   locked: boolean;
   catPending: boolean;
+  financeCatPending: boolean;
   fieldPending: boolean;
   matchPending: boolean;
   onChangeCategory: (taxCategoryId: string | null) => void;
+  onChangeFinanceCategory: (financeCategoryId: string | null) => void;
   onPatch: (data: UpdateReceiptItemInput) => void;
   onMatch: () => void;
   onUnmatch: () => void;
@@ -545,11 +630,14 @@ function ItemRow({
   currencyCode,
   taxShare,
   categories,
+  financeCategories,
   locked,
   catPending,
+  financeCatPending,
   fieldPending,
   matchPending,
   onChangeCategory,
+  onChangeFinanceCategory,
   onPatch,
   onMatch,
   onUnmatch,
@@ -557,6 +645,10 @@ function ItemRow({
   const [catValue, setCatValue] = useState(item.taxCategoryId ?? '');
   if (catValue !== (item.taxCategoryId ?? '') && !catPending) {
     setCatValue(item.taxCategoryId ?? '');
+  }
+  const [finCatValue, setFinCatValue] = useState(item.financeCategoryId ?? '');
+  if (finCatValue !== (item.financeCategoryId ?? '') && !financeCatPending) {
+    setFinCatValue(item.financeCategoryId ?? '');
   }
   const taxRateForRow = locked ? item.taxRate : item.taxCategoryRate;
   const allInPrice =
@@ -623,6 +715,27 @@ function ItemRow({
           </Select>
         )}
       </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">{item.financeCategoryName ?? '—'}</span>
+        ) : (
+          <Select
+            value={finCatValue}
+            disabled={financeCatPending}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setFinCatValue(e.target.value);
+              onChangeFinanceCategory(next);
+            }}
+            className="h-8 text-xs"
+          >
+            <option value="">— Use receipt default —</option>
+            {financeCategories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </Select>
+        )}
+      </td>
       <td className="px-4 py-2 text-right">
         {locked ? (
           <span className="font-mono">{item.quantity}</span>
@@ -684,10 +797,13 @@ interface GroupRowProps {
   currencyCode: string;
   taxShares: Map<string, number>;
   categories: TaxCategoryResponse[];
+  financeCategories: CategoryResponse[];
   locked: boolean;
   catPending: boolean;
+  financeCatPending: boolean;
   matchPending: boolean;
   onChangeCategory: (taxCategoryId: string | null) => void;
+  onChangeFinanceCategory: (financeCategoryId: string | null) => void;
   onMatch: () => void;
   onUnmatch: () => void;
 }
@@ -697,10 +813,13 @@ function GroupRow({
   currencyCode,
   taxShares,
   categories,
+  financeCategories,
   locked,
   catPending,
+  financeCatPending,
   matchPending,
   onChangeCategory,
+  onChangeFinanceCategory,
   onMatch,
   onUnmatch,
 }: GroupRowProps) {
@@ -717,6 +836,10 @@ function GroupRow({
   const [catValue, setCatValue] = useState(first.taxCategoryId ?? '');
   if (catValue !== (first.taxCategoryId ?? '') && !catPending) {
     setCatValue(first.taxCategoryId ?? '');
+  }
+  const [finCatValue, setFinCatValue] = useState(first.financeCategoryId ?? '');
+  if (finCatValue !== (first.financeCategoryId ?? '') && !financeCatPending) {
+    setFinCatValue(first.financeCategoryId ?? '');
   }
 
   const taxRateForRow = locked ? first.taxRate : first.taxCategoryRate;
@@ -767,6 +890,27 @@ function GroupRow({
           >
             <option value="">— Unassigned —</option>
             {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </Select>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">{first.financeCategoryName ?? '—'}</span>
+        ) : (
+          <Select
+            value={finCatValue}
+            disabled={financeCatPending}
+            onChange={(e) => {
+              const next = e.target.value || null;
+              setFinCatValue(e.target.value);
+              onChangeFinanceCategory(next);
+            }}
+            className="h-8 text-xs"
+          >
+            <option value="">— Use receipt default —</option>
+            {financeCategories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </Select>

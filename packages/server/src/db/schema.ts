@@ -33,6 +33,7 @@ export const mealSlotEnum = pgEnum('meal_slot', [
   'EVENING_SNACK',
 ]);
 export const receiptStatusEnum = pgEnum('receipt_status', ['PENDING', 'PARSED', 'REVIEWED', 'FAILED']);
+export const paymentMethodTypeEnum = pgEnum('payment_method_type', ['CASH', 'CREDIT', 'DEBIT', 'BANK', 'OTHER']);
 
 // ==================== Auth & Household ====================
 
@@ -216,12 +217,29 @@ export const categories = pgTable(
   ],
 );
 
+export const paymentMethods = pgTable(
+  'payment_methods',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    type: paymentMethodTypeEnum('type').notNull().default('OTHER'),
+    initialBalance: doublePrecision('initial_balance').notNull().default(0),
+    currencyCode: text('currency_code').notNull().default('CAD'),
+    archived: boolean('archived').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('payment_methods_household_idx').on(t.householdId)],
+);
+
 export const transactions = pgTable(
   'transactions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
     categoryId: uuid('category_id').notNull().references(() => categories.id),
+    paymentMethodId: uuid('payment_method_id').references(() => paymentMethods.id, { onDelete: 'set null' }),
+    receiptId: uuid('receipt_id').references((): AnyPgColumn => receipts.id, { onDelete: 'set null' }),
     amount: doublePrecision('amount').notNull(),
     currencyCode: text('currency_code').notNull(),
     type: transactionTypeEnum('type').notNull(),
@@ -233,6 +251,8 @@ export const transactions = pgTable(
   (t) => [
     index('transactions_household_date_idx').on(t.householdId, t.date),
     index('transactions_category_idx').on(t.categoryId),
+    index('transactions_payment_method_idx').on(t.paymentMethodId),
+    index('transactions_receipt_idx').on(t.receiptId),
   ],
 );
 
@@ -329,6 +349,8 @@ export const receipts = pgTable(
     householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
     storeId: uuid('store_id').references(() => stores.id),
     chainId: uuid('chain_id').references(() => chains.id, { onDelete: 'set null' }),
+    paymentMethodId: uuid('payment_method_id').references(() => paymentMethods.id, { onDelete: 'set null' }),
+    defaultCategoryId: uuid('default_category_id').references(() => categories.id, { onDelete: 'set null' }),
     uploadedById: uuid('uploaded_by_id').notNull().references(() => users.id),
     parserVersion: text('parser_version'),
     rawText: text('raw_text').notNull(),
@@ -361,6 +383,7 @@ export const receiptItems = pgTable(
     rawCode: text('raw_code'),
     taxCode: text('tax_code'),
     taxCategoryId: uuid('tax_category_id').references(() => taxCategories.id, { onDelete: 'set null' }),
+    financeCategoryId: uuid('finance_category_id').references(() => categories.id, { onDelete: 'set null' }),
     quantity: doublePrecision('quantity').notNull().default(1),
     unitPrice: doublePrecision('unit_price'),
     lineTotal: doublePrecision('line_total').notNull(),
@@ -521,7 +544,14 @@ export const categoriesRelations = relations(categories, ({ one, many }) => ({
 export const transactionsRelations = relations(transactions, ({ one }) => ({
   household: one(households, { fields: [transactions.householdId], references: [households.id] }),
   category: one(categories, { fields: [transactions.categoryId], references: [categories.id] }),
+  paymentMethod: one(paymentMethods, { fields: [transactions.paymentMethodId], references: [paymentMethods.id] }),
+  receipt: one(receipts, { fields: [transactions.receiptId], references: [receipts.id] }),
   createdBy: one(users, { fields: [transactions.createdById], references: [users.id] }),
+}));
+
+export const paymentMethodsRelations = relations(paymentMethods, ({ one, many }) => ({
+  household: one(households, { fields: [paymentMethods.householdId], references: [households.id] }),
+  transactions: many(transactions),
 }));
 
 export const householdCurrenciesRelations = relations(householdCurrencies, ({ one }) => ({
@@ -553,14 +583,18 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
   household: one(households, { fields: [receipts.householdId], references: [households.id] }),
   matchedStore: one(stores, { fields: [receipts.storeId], references: [stores.id] }),
   chain: one(chains, { fields: [receipts.chainId], references: [chains.id] }),
+  paymentMethod: one(paymentMethods, { fields: [receipts.paymentMethodId], references: [paymentMethods.id] }),
+  defaultCategory: one(categories, { fields: [receipts.defaultCategoryId], references: [categories.id] }),
   uploadedBy: one(users, { fields: [receipts.uploadedById], references: [users.id] }),
   items: many(receiptItems),
+  transactions: many(transactions),
 }));
 
 export const receiptItemsRelations = relations(receiptItems, ({ one }) => ({
   receipt: one(receipts, { fields: [receiptItems.receiptId], references: [receipts.id] }),
   product: one(products, { fields: [receiptItems.productId], references: [products.id] }),
   taxCategory: one(taxCategories, { fields: [receiptItems.taxCategoryId], references: [taxCategories.id] }),
+  financeCategory: one(categories, { fields: [receiptItems.financeCategoryId], references: [categories.id] }),
 }));
 
 export const taxCategoriesRelations = relations(taxCategories, ({ many }) => ({

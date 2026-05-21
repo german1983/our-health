@@ -10,6 +10,7 @@ const navItems = [
   { path: '/recipes', label: 'Recipes', icon: 'ChefHat' },
   { path: '/intake', label: 'Intake', icon: 'Utensils' },
   { path: '/finance', label: 'Finance', icon: 'DollarSign' },
+  { path: '/payment-methods', label: 'Payment', icon: 'CreditCard' },
   { path: '/chains', label: 'Chains', icon: 'Store' },
   { path: '/household', label: 'Household', icon: 'Users' },
 ];

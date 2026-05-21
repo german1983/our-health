@@ -3,6 +3,7 @@ import {
   confirmReceiptItemSchema,
   createReceiptSchema,
   matchReceiptItemSchema,
+  setItemFinanceCategorySchema,
   setItemTaxCategorySchema,
   supportedReceiptStores,
   updateReceiptItemSchema,
@@ -190,6 +191,7 @@ router.post('/:id/confirm', authenticate, requireHousehold, async (req, res, nex
     const receipt = await receiptService.confirmReceipt({
       receiptId: req.params.id,
       householdId: req.householdId!,
+      userId: req.userId!,
     });
     res.json(receipt);
   } catch (err) {
@@ -225,6 +227,30 @@ router.patch(
         receiptItemId: req.params.itemId,
         taxCategoryId,
         applyToChain,
+        applyToReceipt,
+        householdId: req.householdId!,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/items/:itemId/finance-category',
+  authenticate,
+  requireHousehold,
+  validate(setItemFinanceCategorySchema),
+  async (req, res, next) => {
+    try {
+      const { financeCategoryId, applyToReceipt } = req.body as {
+        financeCategoryId: string | null;
+        applyToReceipt: boolean;
+      };
+      const receipt = await receiptService.setItemFinanceCategory({
+        receiptItemId: req.params.itemId,
+        financeCategoryId,
         applyToReceipt,
         householdId: req.householdId!,
       });

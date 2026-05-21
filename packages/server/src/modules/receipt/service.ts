@@ -4,11 +4,13 @@ import {
   chainProductCodes,
   chains,
   chainTaxCodes,
+  paymentMethods,
   priceRecords,
   receiptItems,
   receipts,
   stores,
   taxCategories,
+  transactions,
 } from '../../db/schema.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
 import type { UpdateReceiptInput, UpdateReceiptItemInput } from '@personal-budget/shared';
@@ -21,7 +23,9 @@ import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js'
 
 const receiptRelations = {
   chain: true,
-  items: { with: { product: true, taxCategory: true } },
+  paymentMethod: true,
+  defaultCategory: true,
+  items: { with: { product: true, taxCategory: true, financeCategory: true } },
 } as const;
 
 type ReceiptWithItems = {
@@ -36,6 +40,10 @@ type ReceiptWithItems = {
   total: number | null;
   currencyCode: string;
   parserVersion: string | null;
+  paymentMethodId: string | null;
+  paymentMethod: { name: string } | null;
+  defaultCategoryId: string | null;
+  defaultCategory: { name: string } | null;
   createdAt: Date;
   items: ReceiptItemWithProduct[];
 };
@@ -46,6 +54,7 @@ type ReceiptItemWithProduct = {
   rawCode: string | null;
   taxCode: string | null;
   taxCategoryId: string | null;
+  financeCategoryId: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
@@ -56,6 +65,7 @@ type ReceiptItemWithProduct = {
   productId: string | null;
   product: { name: string } | null;
   taxCategory: { name: string; rate: number } | null;
+  financeCategory: { name: string } | null;
 };
 
 export interface CreateReceiptOptions {
@@ -385,6 +395,8 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     taxCategoryId: item.taxCategoryId,
     taxCategoryName: item.taxCategory?.name ?? null,
     taxCategoryRate: item.taxCategory?.rate ?? null,
+    financeCategoryId: item.financeCategoryId,
+    financeCategoryName: item.financeCategory?.name ?? null,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     lineTotal: item.lineTotal,
@@ -423,6 +435,16 @@ export async function updateReceiptHeader(args: {
     if (!store) throw new NotFoundError('Store');
   }
 
+  if (args.data.paymentMethodId) {
+    const pm = await db.query.paymentMethods.findFirst({
+      where: and(
+        eq(paymentMethods.id, args.data.paymentMethodId),
+        eq(paymentMethods.householdId, args.householdId),
+      ),
+    });
+    if (!pm) throw new NotFoundError('Payment method');
+  }
+
   const updates: Record<string, unknown> = { ...args.data };
   if (args.data.purchasedAt !== undefined) {
     updates.purchasedAt = args.data.purchasedAt ? new Date(args.data.purchasedAt) : null;
@@ -455,6 +477,7 @@ export async function updateReceiptItem(args: {
 export async function confirmReceipt(args: {
   receiptId: string;
   householdId: string;
+  userId: string;
 }): Promise<ReceiptResponse> {
   const receipt = await db.query.receipts.findFirst({
     where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
@@ -475,20 +498,56 @@ export async function confirmReceipt(args: {
   const printedTax = receipt.tax ?? 0;
 
   await db.transaction(async (tx) => {
-    for (const item of receipt.items) {
+    // Snapshot per-line tax + compute final line totals.
+    const itemSnapshots = receipt.items.map((item) => {
       const rate = item.taxCategory?.rate ?? 0;
       const weight = item.lineTotal * rate;
       const taxAmount = weighted > 0 ? (printedTax * weight) / weighted : 0;
-      const finalLineTotal = item.lineTotal + taxAmount;
+      return { item, taxAmount, finalLineTotal: item.lineTotal + taxAmount, rate };
+    });
+
+    for (const snap of itemSnapshots) {
       await tx
         .update(receiptItems)
         .set({
-          taxRate: rate,
-          taxAmount,
-          finalLineTotal,
+          taxRate: snap.rate,
+          taxAmount: snap.taxAmount,
+          finalLineTotal: snap.finalLineTotal,
         })
-        .where(eq(receiptItems.id, item.id));
+        .where(eq(receiptItems.id, snap.item.id));
     }
+
+    // Build transactions: one per resolved finance category. Items without
+    // their own category fall back to the receipt's default. Items with no
+    // category (and no default) get dropped on the floor with a warning
+    // status — we don't silently lose money.
+    const buckets = new Map<string, number>();
+    for (const snap of itemSnapshots) {
+      const cat = snap.item.financeCategoryId ?? receipt.defaultCategoryId;
+      if (!cat) continue;
+      buckets.set(cat, (buckets.get(cat) ?? 0) + snap.finalLineTotal);
+    }
+
+    if (receipt.paymentMethodId && buckets.size > 0) {
+      const txDate = receipt.purchasedAt ?? receipt.createdAt;
+      const description = receipt.chainId
+        ? `Receipt #${receipt.id.slice(0, 8)}`
+        : 'Receipt';
+      const rows = Array.from(buckets.entries()).map(([categoryId, amount]) => ({
+        householdId: args.householdId,
+        categoryId,
+        paymentMethodId: receipt.paymentMethodId,
+        receiptId: receipt.id,
+        amount: Math.round(amount * 100) / 100,
+        currencyCode: receipt.currencyCode,
+        type: 'EXPENSE' as const,
+        description,
+        date: txDate,
+        createdById: args.userId,
+      }));
+      if (rows.length > 0) await tx.insert(transactions).values(rows);
+    }
+
     await tx
       .update(receipts)
       .set({ status: 'REVIEWED' })
@@ -496,6 +555,42 @@ export async function confirmReceipt(args: {
   });
 
   return getReceipt(args.receiptId, args.householdId);
+}
+
+export async function setItemFinanceCategory(args: {
+  receiptItemId: string;
+  financeCategoryId: string | null;
+  applyToReceipt: boolean;
+  householdId: string;
+}): Promise<ReceiptResponse> {
+  const item = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, args.receiptItemId),
+    with: { receipt: true },
+  });
+  if (!item || item.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Receipt item');
+  }
+  ensureEditable(item.receipt.status);
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(receiptItems)
+      .set({ financeCategoryId: args.financeCategoryId })
+      .where(eq(receiptItems.id, item.id));
+
+    // Cascade to other lines on this receipt sharing the same rawCode, so
+    // setting "Cleaning" on one Magic Duster line propagates to its duplicates.
+    if (args.applyToReceipt && item.rawCode) {
+      await tx
+        .update(receiptItems)
+        .set({ financeCategoryId: args.financeCategoryId })
+        .where(
+          and(eq(receiptItems.receiptId, item.receiptId), eq(receiptItems.rawCode, item.rawCode)),
+        );
+    }
+  });
+
+  return getReceipt(item.receiptId, args.householdId);
 }
 
 export async function unlockReceipt(args: {
@@ -511,6 +606,9 @@ export async function unlockReceipt(args: {
   }
 
   await db.transaction(async (tx) => {
+    // Cascade-delete derived ledger entries; the receipt is the source of
+    // truth and re-confirmation will recreate them cleanly.
+    await tx.delete(transactions).where(eq(transactions.receiptId, args.receiptId));
     await tx
       .update(receiptItems)
       .set({ taxRate: null, taxAmount: null, finalLineTotal: null })
@@ -619,6 +717,10 @@ function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
     total: receipt.total,
     currencyCode: receipt.currencyCode,
     parserVersion: receipt.parserVersion,
+    paymentMethodId: receipt.paymentMethodId,
+    paymentMethodName: receipt.paymentMethod?.name ?? null,
+    defaultCategoryId: receipt.defaultCategoryId,
+    defaultCategoryName: receipt.defaultCategory?.name ?? null,
     items: receipt.items.map(formatItem),
     createdAt: receipt.createdAt.toISOString(),
   };

@@ -57,6 +57,13 @@
       "when": 1779156148498,
       "tag": "0007_flowery_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779197363433,
+      "tag": "0008_nice_the_hand",
+      "breakpoints": true
     }
   ]
 }

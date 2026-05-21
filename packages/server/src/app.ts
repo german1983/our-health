@@ -13,6 +13,7 @@ import currencyRoutes from './modules/currency/routes.js';
 import intakeRoutes from './modules/intake/routes.js';
 import receiptRoutes from './modules/receipt/routes.js';
 import chainRoutes from './modules/chain/routes.js';
+import paymentMethodRoutes from './modules/payment-method/routes.js';
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/currencies', currencyRoutes);
 app.use('/api/intake', intakeRoutes);
 app.use('/api/receipts', receiptRoutes);
 app.use('/api/chains', chainRoutes);
+app.use('/api/payment-methods', paymentMethodRoutes);
 
 app.use(errorHandler);
 

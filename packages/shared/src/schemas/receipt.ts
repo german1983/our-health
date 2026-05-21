@@ -45,6 +45,8 @@ export const updateReceiptSchema = z
     purchasedAt: z.string().datetime().nullable().optional(),
     storeId: z.string().uuid().nullable().optional(),
     currencyCode: z.string().length(3).optional(),
+    paymentMethodId: z.string().uuid().nullable().optional(),
+    defaultCategoryId: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type UpdateReceiptInput = z.infer<typeof updateReceiptSchema>;
@@ -55,9 +57,17 @@ export const updateReceiptItemSchema = z
     quantity: z.number().optional(),
     unitPrice: z.number().nullable().optional(),
     lineTotal: z.number().optional(),
+    financeCategoryId: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type UpdateReceiptItemInput = z.infer<typeof updateReceiptItemSchema>;
+
+export const setItemFinanceCategorySchema = z.object({
+  financeCategoryId: z.string().uuid().nullable(),
+  /** Cascade to siblings on this receipt that share the same rawCode. */
+  applyToReceipt: z.boolean().default(true),
+});
+export type SetItemFinanceCategoryInput = z.infer<typeof setItemFinanceCategorySchema>;
 
 export interface TaxCategoryResponse {
   id: string;
@@ -73,6 +83,8 @@ export interface ReceiptItemResponse {
   taxCategoryId: string | null;
   taxCategoryName: string | null;
   taxCategoryRate: number | null;
+  financeCategoryId: string | null;
+  financeCategoryName: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
@@ -100,6 +112,10 @@ export interface ReceiptResponse {
   total: number | null;
   currencyCode: string;
   parserVersion: string | null;
+  paymentMethodId: string | null;
+  paymentMethodName: string | null;
+  defaultCategoryId: string | null;
+  defaultCategoryName: string | null;
   items: ReceiptItemResponse[];
   createdAt: string;
 }
