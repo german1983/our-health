@@ -115,6 +115,9 @@ export interface ReceiptItemResponse {
   financeCategoryName: string | null;
   storageSpaceId: string | null;
   storageSpaceName: string | null;
+  /** Most-recently-used storage space for this product across the household, if any. */
+  suggestedStorageSpaceId: string | null;
+  suggestedStorageSpaceName: string | null;
   expiryDate: string | null;
   quantity: number;
   unitPrice: number | null;

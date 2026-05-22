@@ -101,6 +101,8 @@ type ReceiptItemWithProduct = {
   taxCategory: { name: string; rate: number } | null;
   financeCategory: { name: string } | null;
   storageSpace: { name: string } | null;
+  /** Suggestion attached at fetch time from the latest storage row for this product, if any. */
+  _suggestedStorage?: { id: string; name: string } | null;
 };
 
 export interface CreateReceiptOptions {
@@ -212,12 +214,53 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
   return getReceipt(receiptId, opts.householdId);
 }
 
+/**
+ * For a set of productIds in a household, returns a map productId -> the
+ * most-recently-used storage space (id + name). Used to suggest where new
+ * receipts of the same product should go.
+ */
+async function lastStorageByProduct(
+  householdId: string,
+  productIds: string[],
+): Promise<Map<string, { id: string; name: string }>> {
+  if (productIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinctOn([storageItems.productId], {
+      productId: storageItems.productId,
+      storageSpaceId: storageItems.storageSpaceId,
+      storageSpaceName: storageSpaces.name,
+    })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .where(
+      and(eq(storageSpaces.householdId, householdId), inArray(storageItems.productId, productIds)),
+    )
+    .orderBy(storageItems.productId, desc(storageItems.addedAt));
+
+  const out = new Map<string, { id: string; name: string }>();
+  for (const r of rows) {
+    out.set(r.productId, { id: r.storageSpaceId, name: r.storageSpaceName });
+  }
+  return out;
+}
+
 export async function getReceipt(id: string, householdId: string): Promise<ReceiptResponse> {
   const receipt = await db.query.receipts.findFirst({
     where: and(eq(receipts.id, id), eq(receipts.householdId, householdId)),
     with: receiptRelations,
   });
   if (!receipt) throw new NotFoundError('Receipt');
+
+  const productIds = receipt.items
+    .map((i) => i.productId)
+    .filter((p): p is string => !!p);
+  const suggestions = await lastStorageByProduct(householdId, productIds);
+  for (const item of receipt.items) {
+    (item as unknown as ReceiptItemWithProduct)._suggestedStorage = item.productId
+      ? suggestions.get(item.productId) ?? null
+      : null;
+  }
+
   return formatReceipt(receipt as unknown as ReceiptWithItems);
 }
 
@@ -228,6 +271,7 @@ export async function listReceipts(householdId: string): Promise<ReceiptResponse
     orderBy: desc(receipts.createdAt),
     limit: 50,
   });
+  // The list view doesn't render storage hints, so skip the lookup for speed.
   return rows.map((r) => formatReceipt(r as unknown as ReceiptWithItems));
 }
 
@@ -434,6 +478,8 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     financeCategoryName: item.financeCategory?.name ?? null,
     storageSpaceId: item.storageSpaceId,
     storageSpaceName: item.storageSpace?.name ?? null,
+    suggestedStorageSpaceId: item._suggestedStorage?.id ?? null,
+    suggestedStorageSpaceName: item._suggestedStorage?.name ?? null,
     expiryDate: item.expiryDate?.toISOString() ?? null,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
