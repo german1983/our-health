@@ -19,6 +19,8 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
   const queryClient = useQueryClient();
   const [query, setQuery] = useState(initialQuery);
   const [mode, setMode] = useState<'search' | 'create'>('search');
+  // Once the user explicitly picks a tab, stop auto-switching.
+  const [modePinned, setModePinned] = useState(false);
   const [newName, setNewName] = useState(initialQuery);
   const [newBarcode, setNewBarcode] = useState(initialBarcode ?? '');
   const [newBrand, setNewBrand] = useState('');
@@ -31,6 +33,7 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
       setNewBarcode(initialBarcode ?? '');
       setNewBrand('');
       setMode('search');
+      setModePinned(false);
     }
   }, [open, initialQuery, initialBarcode]);
 
@@ -44,6 +47,15 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
         .then((r) => r.data.items),
     enabled: open,
   });
+
+  // When the search returns zero hits and the user hasn't manually picked
+  // a tab, flip to Create so they don't have to hunt for the toggle.
+  useEffect(() => {
+    if (!open || modePinned) return;
+    if (!isFetching && results && results.length === 0 && query.trim().length > 0) {
+      setMode('create');
+    }
+  }, [open, modePinned, isFetching, results, query]);
 
   const createMutation = useMutation({
     mutationFn: (input: { name: string; barcode?: string; brand?: string }) =>
@@ -75,7 +87,10 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
         <button
           type="button"
           className={mode === 'search' ? 'font-medium' : 'text-muted-foreground'}
-          onClick={() => setMode('search')}
+          onClick={() => {
+            setMode('search');
+            setModePinned(true);
+          }}
         >
           Find existing
         </button>
@@ -83,7 +98,10 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
         <button
           type="button"
           className={mode === 'create' ? 'font-medium' : 'text-muted-foreground'}
-          onClick={() => setMode('create')}
+          onClick={() => {
+            setMode('create');
+            setModePinned(true);
+          }}
         >
           Create new
         </button>

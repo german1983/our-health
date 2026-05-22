@@ -119,7 +119,9 @@ export function ReceiptDetailPage() {
   });
 
   const { data: storageSpacesData } = useQuery({
-    queryKey: ['storage-spaces'],
+    // Match the key used in the Storage page so its create mutation
+    // (which invalidates ['storage']) refreshes this query too.
+    queryKey: ['storage', 'spaces'],
     queryFn: () => api.get<StorageSpaceResponse[]>('/storage/spaces').then((r) => r.data),
     staleTime: 60_000,
   });
@@ -840,18 +842,30 @@ function ItemRow({
         {locked ? (
           <span className="text-xs text-muted-foreground">{item.storageSpaceName ?? '—'}</span>
         ) : (
-          <Select
-            value={item.storageSpaceId ?? ''}
-            disabled={!item.productId}
-            onChange={(e) => onPatch({ storageSpaceId: e.target.value || null })}
-            className="h-8 text-xs"
-            title={item.productId ? undefined : 'Match a product first to inventory this line'}
-          >
-            <option value="">— Use receipt default —</option>
-            {storageSpaces.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </Select>
+          <div className="space-y-1">
+            <Select
+              value={item.storageSpaceId ?? ''}
+              disabled={!item.productId}
+              onChange={(e) => onPatch({ storageSpaceId: e.target.value || null })}
+              className="h-8 text-xs"
+              title={item.productId ? undefined : 'Match a product first to inventory this line'}
+            >
+              <option value="">— Use receipt default —</option>
+              {storageSpaces.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+            {!item.storageSpaceId && item.suggestedStorageSpaceId && (
+              <button
+                type="button"
+                onClick={() => onPatch({ storageSpaceId: item.suggestedStorageSpaceId })}
+                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap"
+                title="Where this product was last stored"
+              >
+                ↺ Last time: {item.suggestedStorageSpaceName}
+              </button>
+            )}
+          </div>
         )}
       </td>
       <td className="px-4 py-2">
@@ -1062,18 +1076,30 @@ function GroupRow({
         {locked ? (
           <span className="text-xs text-muted-foreground">{first.storageSpaceName ?? '—'}</span>
         ) : (
-          <Select
-            value={first.storageSpaceId ?? ''}
-            disabled={!first.productId}
-            onChange={(e) => onPatchAll({ storageSpaceId: e.target.value || null })}
-            className="h-8 text-xs"
-            title={first.productId ? undefined : 'Match a product first'}
-          >
-            <option value="">— Use receipt default —</option>
-            {storageSpaces.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </Select>
+          <div className="space-y-1">
+            <Select
+              value={first.storageSpaceId ?? ''}
+              disabled={!first.productId}
+              onChange={(e) => onPatchAll({ storageSpaceId: e.target.value || null })}
+              className="h-8 text-xs"
+              title={first.productId ? undefined : 'Match a product first'}
+            >
+              <option value="">— Use receipt default —</option>
+              {storageSpaces.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+            {!first.storageSpaceId && first.suggestedStorageSpaceId && (
+              <button
+                type="button"
+                onClick={() => onPatchAll({ storageSpaceId: first.suggestedStorageSpaceId })}
+                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap"
+                title="Where this product was last stored"
+              >
+                ↺ Last time: {first.suggestedStorageSpaceName}
+              </button>
+            )}
+          </div>
         )}
       </td>
       <td className="px-4 py-2">
