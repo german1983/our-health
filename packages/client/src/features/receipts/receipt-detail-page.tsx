@@ -15,6 +15,7 @@ import type {
   PaymentMethodResponse,
   ReceiptItemResponse,
   ReceiptResponse,
+  StorageSpaceResponse,
   StoreResponse,
   TaxCategoryResponse,
   UpdateReceiptInput,
@@ -113,6 +114,12 @@ export function ReceiptDetailPage() {
   const { data: paymentMethods } = useQuery({
     queryKey: ['payment-methods'],
     queryFn: () => api.get<PaymentMethodResponse[]>('/payment-methods').then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  const { data: storageSpacesData } = useQuery({
+    queryKey: ['storage-spaces'],
+    queryFn: () => api.get<StorageSpaceResponse[]>('/storage/spaces').then((r) => r.data),
     staleTime: 60_000,
   });
 
@@ -361,6 +368,20 @@ export function ReceiptDetailPage() {
               ))}
             </Select>
           </Field>
+          <Field label="Default storage space">
+            <Select
+              value={receipt.defaultStorageSpaceId ?? ''}
+              disabled={locked}
+              onChange={(e) =>
+                patchReceipt.mutate({ defaultStorageSpaceId: e.target.value || null })
+              }
+            >
+              <option value="">— Don't inventory —</option>
+              {storageSpacesData?.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+          </Field>
         </CardContent>
       </Card>
 
@@ -443,6 +464,8 @@ export function ReceiptDetailPage() {
                 <th className="px-4 py-2 text-center">Tax</th>
                 <th className="px-4 py-2">Tax category</th>
                 <th className="px-4 py-2">Expense category</th>
+                <th className="px-4 py-2">Storage</th>
+                <th className="px-4 py-2">Expires</th>
                 <th className="px-4 py-2 text-right">Qty</th>
                 <th className="px-4 py-2 text-right">Pre-tax</th>
                 <th className="px-4 py-2 text-right">All-in</th>
@@ -460,6 +483,7 @@ export function ReceiptDetailPage() {
                         taxShare={taxShares.get(group.items[0].id) ?? 0}
                         categories={taxCategories ?? []}
                         financeCategories={flatCategories}
+                        storageSpaces={storageSpacesData ?? []}
                         locked={locked}
                         catPending={setCategory.isPending && setCategory.variables?.itemId === group.items[0].id}
                         financeCatPending={setFinanceCategory.isPending && setFinanceCategory.variables?.itemId === group.items[0].id}
@@ -483,6 +507,7 @@ export function ReceiptDetailPage() {
                         taxShares={taxShares}
                         categories={taxCategories ?? []}
                         financeCategories={flatCategories}
+                        storageSpaces={storageSpacesData ?? []}
                         locked={locked}
                         catPending={setCategory.isPending && group.items.some((i) => setCategory.variables?.itemId === i.id)}
                         financeCatPending={setFinanceCategory.isPending && group.items.some((i) => setFinanceCategory.variables?.itemId === i.id)}
@@ -493,6 +518,12 @@ export function ReceiptDetailPage() {
                         onChangeFinanceCategory={(financeCategoryId) =>
                           setFinanceCategory.mutate({ itemId: group.items[0].id, financeCategoryId })
                         }
+                        onPatchAll={(data) => {
+                          // Cascade per-row mutation across every item in the group.
+                          for (const i of group.items) {
+                            patchItem.mutate({ itemId: i.id, data });
+                          }
+                        }}
                         onMatch={() => setPickerItem(group.items[0])}
                         onUnmatch={() => matchProduct.mutate({ itemId: group.items[0].id, productId: null })}
                       />
@@ -506,6 +537,7 @@ export function ReceiptDetailPage() {
                       taxShare={taxShares.get(item.id) ?? 0}
                       categories={taxCategories ?? []}
                       financeCategories={flatCategories}
+                      storageSpaces={storageSpacesData ?? []}
                       locked={locked}
                       catPending={setCategory.isPending && setCategory.variables?.itemId === item.id}
                       financeCatPending={setFinanceCategory.isPending && setFinanceCategory.variables?.itemId === item.id}
@@ -525,21 +557,21 @@ export function ReceiptDetailPage() {
             </tbody>
             <tfoot className="border-t border-border text-sm">
               <tr>
-                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={7}>Subtotal</td>
+                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={9}>Subtotal</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.subtotal != null ? formatCurrency(receipt.subtotal, receipt.currencyCode) : '—'}
                 </td>
                 <td />
               </tr>
               <tr>
-                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={7}>Tax</td>
+                <td className="px-4 py-2 text-right text-muted-foreground" colSpan={9}>Tax</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {receipt.tax != null ? formatCurrency(receipt.tax, receipt.currencyCode) : '—'}
                 </td>
                 <td />
               </tr>
               <tr>
-                <td className="px-4 py-2 text-right font-medium" colSpan={7}>Total</td>
+                <td className="px-4 py-2 text-right font-medium" colSpan={9}>Total</td>
                 <td className="px-4 py-2 text-right font-mono font-medium">
                   {receipt.total != null ? formatCurrency(receipt.total, receipt.currencyCode) : '—'}
                 </td>
@@ -613,6 +645,7 @@ interface ItemRowProps {
   taxShare: number;
   categories: TaxCategoryResponse[];
   financeCategories: CategoryResponse[];
+  storageSpaces: StorageSpaceResponse[];
   locked: boolean;
   catPending: boolean;
   financeCatPending: boolean;
@@ -631,6 +664,7 @@ function ItemRow({
   taxShare,
   categories,
   financeCategories,
+  storageSpaces,
   locked,
   catPending,
   financeCatPending,
@@ -736,6 +770,44 @@ function ItemRow({
           </Select>
         )}
       </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">{item.storageSpaceName ?? '—'}</span>
+        ) : (
+          <Select
+            value={item.storageSpaceId ?? ''}
+            disabled={!item.productId}
+            onChange={(e) => onPatch({ storageSpaceId: e.target.value || null })}
+            className="h-8 text-xs"
+            title={item.productId ? undefined : 'Match a product first to inventory this line'}
+          >
+            <option value="">— Use receipt default —</option>
+            {storageSpaces.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </Select>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">
+            {item.expiryDate ? formatDate(item.expiryDate) : '—'}
+          </span>
+        ) : (
+          <Input
+            type="date"
+            defaultValue={item.expiryDate ? item.expiryDate.slice(0, 10) : ''}
+            onBlur={(e) => {
+              const v = e.target.value;
+              const next = v ? new Date(v + 'T12:00:00Z').toISOString() : null;
+              if (next !== (item.expiryDate ?? null)) {
+                onPatch({ expiryDate: next });
+              }
+            }}
+            className="h-8 text-xs"
+          />
+        )}
+      </td>
       <td className="px-4 py-2 text-right">
         {locked ? (
           <span className="font-mono">{item.quantity}</span>
@@ -798,12 +870,14 @@ interface GroupRowProps {
   taxShares: Map<string, number>;
   categories: TaxCategoryResponse[];
   financeCategories: CategoryResponse[];
+  storageSpaces: StorageSpaceResponse[];
   locked: boolean;
   catPending: boolean;
   financeCatPending: boolean;
   matchPending: boolean;
   onChangeCategory: (taxCategoryId: string | null) => void;
   onChangeFinanceCategory: (financeCategoryId: string | null) => void;
+  onPatchAll: (data: UpdateReceiptItemInput) => void;
   onMatch: () => void;
   onUnmatch: () => void;
 }
@@ -814,12 +888,14 @@ function GroupRow({
   taxShares,
   categories,
   financeCategories,
+  storageSpaces,
   locked,
   catPending,
   financeCatPending,
   matchPending,
   onChangeCategory,
   onChangeFinanceCategory,
+  onPatchAll,
   onMatch,
   onUnmatch,
 }: GroupRowProps) {
@@ -914,6 +990,44 @@ function GroupRow({
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </Select>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">{first.storageSpaceName ?? '—'}</span>
+        ) : (
+          <Select
+            value={first.storageSpaceId ?? ''}
+            disabled={!first.productId}
+            onChange={(e) => onPatchAll({ storageSpaceId: e.target.value || null })}
+            className="h-8 text-xs"
+            title={first.productId ? undefined : 'Match a product first'}
+          >
+            <option value="">— Use receipt default —</option>
+            {storageSpaces.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </Select>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        {locked ? (
+          <span className="text-xs text-muted-foreground">
+            {first.expiryDate ? formatDate(first.expiryDate) : '—'}
+          </span>
+        ) : (
+          <Input
+            type="date"
+            defaultValue={first.expiryDate ? first.expiryDate.slice(0, 10) : ''}
+            onBlur={(e) => {
+              const v = e.target.value;
+              const next = v ? new Date(v + 'T12:00:00Z').toISOString() : null;
+              if (next !== (first.expiryDate ?? null)) {
+                onPatchAll({ expiryDate: next });
+              }
+            }}
+            className="h-8 text-xs"
+          />
         )}
       </td>
       <td className="px-4 py-2 text-right font-mono">{totalQty}</td>

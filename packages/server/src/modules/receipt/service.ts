@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
   chainProductCodes,
@@ -8,6 +8,8 @@ import {
   priceRecords,
   receiptItems,
   receipts,
+  storageItems,
+  storageSpaces,
   stores,
   taxCategories,
   transactions,
@@ -25,7 +27,15 @@ const receiptRelations = {
   chain: true,
   paymentMethod: true,
   defaultCategory: true,
-  items: { with: { product: true, taxCategory: true, financeCategory: true } },
+  defaultStorageSpace: true,
+  items: {
+    with: {
+      product: true,
+      taxCategory: true,
+      financeCategory: true,
+      storageSpace: true,
+    },
+  },
 } as const;
 
 type ReceiptWithItems = {
@@ -44,6 +54,8 @@ type ReceiptWithItems = {
   paymentMethod: { name: string } | null;
   defaultCategoryId: string | null;
   defaultCategory: { name: string } | null;
+  defaultStorageSpaceId: string | null;
+  defaultStorageSpace: { name: string } | null;
   createdAt: Date;
   items: ReceiptItemWithProduct[];
 };
@@ -55,6 +67,8 @@ type ReceiptItemWithProduct = {
   taxCode: string | null;
   taxCategoryId: string | null;
   financeCategoryId: string | null;
+  storageSpaceId: string | null;
+  expiryDate: Date | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
@@ -66,6 +80,7 @@ type ReceiptItemWithProduct = {
   product: { name: string } | null;
   taxCategory: { name: string; rate: number } | null;
   financeCategory: { name: string } | null;
+  storageSpace: { name: string } | null;
 };
 
 export interface CreateReceiptOptions {
@@ -397,6 +412,9 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     taxCategoryRate: item.taxCategory?.rate ?? null,
     financeCategoryId: item.financeCategoryId,
     financeCategoryName: item.financeCategory?.name ?? null,
+    storageSpaceId: item.storageSpaceId,
+    storageSpaceName: item.storageSpace?.name ?? null,
+    expiryDate: item.expiryDate?.toISOString() ?? null,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     lineTotal: item.lineTotal,
@@ -445,6 +463,16 @@ export async function updateReceiptHeader(args: {
     if (!pm) throw new NotFoundError('Payment method');
   }
 
+  if (args.data.defaultStorageSpaceId) {
+    const sp = await db.query.storageSpaces.findFirst({
+      where: and(
+        eq(storageSpaces.id, args.data.defaultStorageSpaceId),
+        eq(storageSpaces.householdId, args.householdId),
+      ),
+    });
+    if (!sp) throw new NotFoundError('Storage space');
+  }
+
   const updates: Record<string, unknown> = { ...args.data };
   if (args.data.purchasedAt !== undefined) {
     updates.purchasedAt = args.data.purchasedAt ? new Date(args.data.purchasedAt) : null;
@@ -469,7 +497,22 @@ export async function updateReceiptItem(args: {
   }
   ensureEditable(item.receipt.status);
 
-  await db.update(receiptItems).set(args.data).where(eq(receiptItems.id, args.itemId));
+  if (args.data.storageSpaceId) {
+    const sp = await db.query.storageSpaces.findFirst({
+      where: and(
+        eq(storageSpaces.id, args.data.storageSpaceId),
+        eq(storageSpaces.householdId, args.householdId),
+      ),
+    });
+    if (!sp) throw new NotFoundError('Storage space');
+  }
+
+  const updates: Record<string, unknown> = { ...args.data };
+  if (args.data.expiryDate !== undefined) {
+    updates.expiryDate = args.data.expiryDate ? new Date(args.data.expiryDate) : null;
+  }
+
+  await db.update(receiptItems).set(updates).where(eq(receiptItems.id, args.itemId));
 
   return getReceipt(item.receiptId, args.householdId);
 }
@@ -548,6 +591,35 @@ export async function confirmReceipt(args: {
       if (rows.length > 0) await tx.insert(transactions).values(rows);
     }
 
+    // Build storage items: one per matched item that has a resolved
+    // storage_space (own override or receipt default). Unmatched items
+    // can't be inventoried (no product to point at). Items with neither
+    // their own storage space nor a default are skipped (DNI).
+    const inventoryRows: Array<{
+      storageSpaceId: string;
+      productId: string;
+      receiptItemId: string;
+      quantity: number;
+      addedById: string;
+      addedAt: Date;
+      expiryDate: Date | null;
+    }> = [];
+    const inventoryDate = receipt.purchasedAt ?? receipt.createdAt;
+    for (const snap of itemSnapshots) {
+      const spaceId = snap.item.storageSpaceId ?? receipt.defaultStorageSpaceId;
+      if (!spaceId || !snap.item.productId) continue;
+      inventoryRows.push({
+        storageSpaceId: spaceId,
+        productId: snap.item.productId,
+        receiptItemId: snap.item.id,
+        quantity: snap.item.quantity,
+        addedById: args.userId,
+        addedAt: inventoryDate,
+        expiryDate: snap.item.expiryDate ?? null,
+      });
+    }
+    if (inventoryRows.length > 0) await tx.insert(storageItems).values(inventoryRows);
+
     await tx
       .update(receipts)
       .set({ status: 'REVIEWED' })
@@ -609,6 +681,20 @@ export async function unlockReceipt(args: {
     // Cascade-delete derived ledger entries; the receipt is the source of
     // truth and re-confirmation will recreate them cleanly.
     await tx.delete(transactions).where(eq(transactions.receiptId, args.receiptId));
+    // Storage items created from this receipt's lines, found via the
+    // receipt_item_id back-link.
+    const itemIds = await tx
+      .select({ id: receiptItems.id })
+      .from(receiptItems)
+      .where(eq(receiptItems.receiptId, args.receiptId));
+    if (itemIds.length > 0) {
+      await tx.delete(storageItems).where(
+        inArray(
+          storageItems.receiptItemId,
+          itemIds.map((r) => r.id),
+        ),
+      );
+    }
     await tx
       .update(receiptItems)
       .set({ taxRate: null, taxAmount: null, finalLineTotal: null })
@@ -721,6 +807,8 @@ function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
     paymentMethodName: receipt.paymentMethod?.name ?? null,
     defaultCategoryId: receipt.defaultCategoryId,
     defaultCategoryName: receipt.defaultCategory?.name ?? null,
+    defaultStorageSpaceId: receipt.defaultStorageSpaceId,
+    defaultStorageSpaceName: receipt.defaultStorageSpace?.name ?? null,
     items: receipt.items.map(formatItem),
     createdAt: receipt.createdAt.toISOString(),
   };
