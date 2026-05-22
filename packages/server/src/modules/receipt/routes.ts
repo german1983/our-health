@@ -1,13 +1,17 @@
 import { Router } from 'express';
 import {
   confirmReceiptItemSchema,
+  createReceiptAdjustmentSchema,
   createReceiptSchema,
   matchReceiptItemSchema,
   setItemFinanceCategorySchema,
   setItemTaxCategorySchema,
   supportedReceiptStores,
+  updateReceiptAdjustmentSchema,
   updateReceiptItemSchema,
   updateReceiptSchema,
+  type CreateReceiptAdjustmentInput,
+  type UpdateReceiptAdjustmentInput,
   type UpdateReceiptInput,
   type UpdateReceiptItemInput,
 } from '@personal-budget/shared';
@@ -252,6 +256,61 @@ router.patch(
         receiptItemId: req.params.itemId,
         financeCategoryId,
         applyToReceipt,
+        householdId: req.householdId!,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/:id/adjustments',
+  authenticate,
+  requireHousehold,
+  validate(createReceiptAdjustmentSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.addReceiptAdjustment({
+        receiptId: req.params.id,
+        householdId: req.householdId!,
+        data: req.body as CreateReceiptAdjustmentInput,
+      });
+      res.status(201).json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/adjustments/:adjId',
+  authenticate,
+  requireHousehold,
+  validate(updateReceiptAdjustmentSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.updateReceiptAdjustment({
+        adjustmentId: req.params.adjId,
+        householdId: req.householdId!,
+        data: req.body as UpdateReceiptAdjustmentInput,
+      });
+      res.json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/adjustments/:adjId',
+  authenticate,
+  requireHousehold,
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.deleteReceiptAdjustment({
+        adjustmentId: req.params.adjId,
         householdId: req.householdId!,
       });
       res.json(receipt);

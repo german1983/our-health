@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
+  categories,
   chainProductCodes,
   chains,
   chainTaxCodes,
   paymentMethods,
   priceRecords,
+  receiptAdjustments,
   receiptItems,
   receipts,
   storageItems,
@@ -15,7 +17,12 @@ import {
   transactions,
 } from '../../db/schema.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
-import type { UpdateReceiptInput, UpdateReceiptItemInput } from '@personal-budget/shared';
+import type {
+  CreateReceiptAdjustmentInput,
+  UpdateReceiptAdjustmentInput,
+  UpdateReceiptInput,
+  UpdateReceiptItemInput,
+} from '@personal-budget/shared';
 import type {
   ReceiptItemResponse,
   ReceiptResponse,
@@ -35,6 +42,9 @@ const receiptRelations = {
       financeCategory: true,
       storageSpace: true,
     },
+  },
+  adjustments: {
+    with: { category: true },
   },
 } as const;
 
@@ -58,6 +68,16 @@ type ReceiptWithItems = {
   defaultStorageSpace: { name: string } | null;
   createdAt: Date;
   items: ReceiptItemWithProduct[];
+  adjustments: ReceiptAdjustmentWithCategory[];
+};
+
+type ReceiptAdjustmentWithCategory = {
+  id: string;
+  categoryId: string;
+  amount: number;
+  description: string | null;
+  createdAt: Date;
+  category: { name: string };
 };
 
 type ReceiptItemWithProduct = {
@@ -524,7 +544,7 @@ export async function confirmReceipt(args: {
 }): Promise<ReceiptResponse> {
   const receipt = await db.query.receipts.findFirst({
     where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
-    with: { items: { with: { taxCategory: true } } },
+    with: { items: { with: { taxCategory: true } }, adjustments: true },
   });
   if (!receipt) throw new NotFoundError('Receipt');
   if (receipt.status === 'REVIEWED') {
@@ -571,24 +591,46 @@ export async function confirmReceipt(args: {
       buckets.set(cat, (buckets.get(cat) ?? 0) + snap.finalLineTotal);
     }
 
-    if (receipt.paymentMethodId && buckets.size > 0) {
+    if (receipt.paymentMethodId) {
       const txDate = receipt.purchasedAt ?? receipt.createdAt;
       const description = receipt.chainId
         ? `Receipt #${receipt.id.slice(0, 8)}`
         : 'Receipt';
-      const rows = Array.from(buckets.entries()).map(([categoryId, amount]) => ({
-        householdId: args.householdId,
-        categoryId,
-        paymentMethodId: receipt.paymentMethodId,
-        receiptId: receipt.id,
-        amount: Math.round(amount * 100) / 100,
-        currencyCode: receipt.currencyCode,
-        type: 'EXPENSE' as const,
-        description,
-        date: txDate,
-        createdById: args.userId,
-      }));
-      if (rows.length > 0) await tx.insert(transactions).values(rows);
+
+      if (buckets.size > 0) {
+        const rows = Array.from(buckets.entries()).map(([categoryId, amount]) => ({
+          householdId: args.householdId,
+          categoryId,
+          paymentMethodId: receipt.paymentMethodId,
+          receiptId: receipt.id,
+          amount: Math.round(amount * 100) / 100,
+          currencyCode: receipt.currencyCode,
+          type: 'EXPENSE' as const,
+          description,
+          date: txDate,
+          createdById: args.userId,
+        }));
+        await tx.insert(transactions).values(rows);
+      }
+
+      // Income transactions for each adjustment (cashback, coupons, etc.).
+      // Categorized to the adjustment's INCOME category; linked back to the
+      // receipt so unlock cleans them up.
+      if (receipt.adjustments.length > 0) {
+        const incomeRows = receipt.adjustments.map((adj) => ({
+          householdId: args.householdId,
+          categoryId: adj.categoryId,
+          paymentMethodId: receipt.paymentMethodId,
+          receiptId: receipt.id,
+          amount: Math.round(adj.amount * 100) / 100,
+          currencyCode: receipt.currencyCode,
+          type: 'INCOME' as const,
+          description: adj.description ? `${adj.description} (${description})` : description,
+          date: txDate,
+          createdById: args.userId,
+        }));
+        await tx.insert(transactions).values(incomeRows);
+      }
     }
 
     // Build storage items: one per matched item that has a resolved
@@ -789,6 +831,88 @@ export async function setItemTaxCategory(args: SetItemTaxCategoryArgs): Promise<
   return getReceipt(item.receiptId, args.householdId);
 }
 
+// ==================== Adjustments ====================
+
+async function loadReceiptForAdjustments(receiptId: string, householdId: string) {
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, receiptId), eq(receipts.householdId, householdId)),
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  return receipt;
+}
+
+async function assertIncomeCategory(categoryId: string, householdId: string) {
+  const cat = await db.query.categories.findFirst({
+    where: and(eq(categories.id, categoryId), eq(categories.householdId, householdId)),
+  });
+  if (!cat) throw new NotFoundError('Category');
+  if (cat.type !== 'INCOME') {
+    throw new ConflictError('Adjustment category must be of type INCOME');
+  }
+}
+
+export async function addReceiptAdjustment(args: {
+  receiptId: string;
+  householdId: string;
+  data: CreateReceiptAdjustmentInput;
+}): Promise<ReceiptResponse> {
+  const receipt = await loadReceiptForAdjustments(args.receiptId, args.householdId);
+  ensureEditable(receipt.status);
+  await assertIncomeCategory(args.data.categoryId, args.householdId);
+
+  await db.insert(receiptAdjustments).values({
+    receiptId: args.receiptId,
+    categoryId: args.data.categoryId,
+    amount: Math.round(args.data.amount * 100) / 100,
+    description: args.data.description ?? null,
+  });
+
+  return getReceipt(args.receiptId, args.householdId);
+}
+
+export async function updateReceiptAdjustment(args: {
+  adjustmentId: string;
+  householdId: string;
+  data: UpdateReceiptAdjustmentInput;
+}): Promise<ReceiptResponse> {
+  const adj = await db.query.receiptAdjustments.findFirst({
+    where: eq(receiptAdjustments.id, args.adjustmentId),
+    with: { receipt: true },
+  });
+  if (!adj || adj.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Adjustment');
+  }
+  ensureEditable(adj.receipt.status);
+  if (args.data.categoryId) {
+    await assertIncomeCategory(args.data.categoryId, args.householdId);
+  }
+
+  const updates: Record<string, unknown> = { ...args.data };
+  if (args.data.amount !== undefined) {
+    updates.amount = Math.round(args.data.amount * 100) / 100;
+  }
+
+  await db.update(receiptAdjustments).set(updates).where(eq(receiptAdjustments.id, args.adjustmentId));
+  return getReceipt(adj.receiptId, args.householdId);
+}
+
+export async function deleteReceiptAdjustment(args: {
+  adjustmentId: string;
+  householdId: string;
+}): Promise<ReceiptResponse> {
+  const adj = await db.query.receiptAdjustments.findFirst({
+    where: eq(receiptAdjustments.id, args.adjustmentId),
+    with: { receipt: true },
+  });
+  if (!adj || adj.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Adjustment');
+  }
+  ensureEditable(adj.receipt.status);
+
+  await db.delete(receiptAdjustments).where(eq(receiptAdjustments.id, args.adjustmentId));
+  return getReceipt(adj.receiptId, args.householdId);
+}
+
 function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
   return {
     id: receipt.id,
@@ -810,6 +934,14 @@ function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
     defaultStorageSpaceId: receipt.defaultStorageSpaceId,
     defaultStorageSpaceName: receipt.defaultStorageSpace?.name ?? null,
     items: receipt.items.map(formatItem),
+    adjustments: (receipt.adjustments ?? []).map((a) => ({
+      id: a.id,
+      categoryId: a.categoryId,
+      categoryName: a.category.name,
+      amount: a.amount,
+      description: a.description,
+      createdAt: a.createdAt.toISOString(),
+    })),
     createdAt: receipt.createdAt.toISOString(),
   };
 }

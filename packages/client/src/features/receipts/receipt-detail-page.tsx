@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import type {
   CategoryResponse,
   PaymentMethodResponse,
+  ReceiptAdjustmentResponse,
   ReceiptItemResponse,
   ReceiptResponse,
   StorageSpaceResponse,
@@ -132,6 +133,10 @@ export function ReceiptDetailPage() {
     () => (categoryTree ? flattenCategories(categoryTree).filter((c) => c.type === 'EXPENSE') : []),
     [categoryTree],
   );
+  const incomeCategories = useMemo(
+    () => (categoryTree ? flattenCategories(categoryTree).filter((c) => c.type === 'INCOME') : []),
+    [categoryTree],
+  );
 
   const onReceiptUpdate = (updated: ReceiptResponse) => {
     queryClient.setQueryData(['receipt', id], updated);
@@ -206,8 +211,50 @@ export function ReceiptDetailPage() {
     onSuccess: onReceiptUpdate,
   });
 
+  const addAdjustment = useMutation({
+    mutationFn: async (input: {
+      categoryId: string;
+      amount: number;
+      description?: string;
+    }) => {
+      const { data } = await api.post<ReceiptResponse>(
+        `/receipts/${id}/adjustments`,
+        input,
+      );
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const patchAdjustment = useMutation({
+    mutationFn: async (input: {
+      adjId: string;
+      data: { categoryId?: string; amount?: number; description?: string | null };
+    }) => {
+      const { data } = await api.patch<ReceiptResponse>(
+        `/receipts/adjustments/${input.adjId}`,
+        input.data,
+      );
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const deleteAdjustment = useMutation({
+    mutationFn: async (adjId: string) => {
+      const { data } = await api.delete<ReceiptResponse>(`/receipts/adjustments/${adjId}`);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
   const sumLineTotals = useMemo(
     () => receipt?.items.reduce((sum, i) => sum + i.lineTotal, 0) ?? 0,
+    [receipt],
+  );
+
+  const totalAdjustments = useMemo(
+    () => receipt?.adjustments.reduce((sum, a) => sum + a.amount, 0) ?? 0,
     [receipt],
   );
 
@@ -395,7 +442,15 @@ export function ReceiptDetailPage() {
         )}
       >
         {allGood ? (
-          <span>Totals reconcile. {receipt.items.length} items, math checks out.</span>
+          <div className="space-y-1">
+            <span>Totals reconcile. {receipt.items.length} items, math checks out.</span>
+            {totalAdjustments > 0 && receipt.total != null && (
+              <div className="text-xs opacity-80">
+                Adjustments: {formatCurrency(totalAdjustments, receipt.currencyCode)} → Net paid:{' '}
+                <strong>{formatCurrency(receipt.total - totalAdjustments, receipt.currencyCode)}</strong>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="space-y-1">
             <div className="font-medium">Numbers don't reconcile</div>
@@ -581,6 +636,17 @@ export function ReceiptDetailPage() {
           </table>
         </CardContent>
       </Card>
+
+      <AdjustmentsCard
+        adjustments={receipt.adjustments}
+        currencyCode={receipt.currencyCode}
+        incomeCategories={incomeCategories}
+        locked={locked}
+        onAdd={(input) => addAdjustment.mutate(input)}
+        onPatch={(adjId, data) => patchAdjustment.mutate({ adjId, data })}
+        onDelete={(adjId) => deleteAdjustment.mutate(adjId)}
+        pendingAdd={addAdjustment.isPending}
+      />
 
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs text-muted-foreground">
@@ -1057,6 +1123,190 @@ function GroupRow({
         )}
       </td>
     </tr>
+  );
+}
+
+interface AdjustmentsCardProps {
+  adjustments: ReceiptAdjustmentResponse[];
+  currencyCode: string;
+  incomeCategories: CategoryResponse[];
+  locked: boolean;
+  onAdd: (input: { categoryId: string; amount: number; description?: string }) => void;
+  onPatch: (
+    adjId: string,
+    data: { categoryId?: string; amount?: number; description?: string | null },
+  ) => void;
+  onDelete: (adjId: string) => void;
+  pendingAdd: boolean;
+}
+
+function AdjustmentsCard({
+  adjustments,
+  currencyCode,
+  incomeCategories,
+  locked,
+  onAdd,
+  onPatch,
+  onDelete,
+  pendingAdd,
+}: AdjustmentsCardProps) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [categoryId, setCategoryId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+
+  function reset() {
+    setShowAdd(false);
+    setCategoryId('');
+    setAmount('');
+    setDescription('');
+  }
+
+  function handleAdd() {
+    const amt = parseFloat(amount);
+    if (!categoryId || !amt || amt <= 0) return;
+    onAdd({ categoryId, amount: amt, description: description.trim() || undefined });
+    reset();
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">Adjustments (cashback, coupons, rebates)</CardTitle>
+        {!locked && !showAdd && (
+          <Button variant="outline" size="sm" onClick={() => setShowAdd(true)}>
+            Add adjustment
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {adjustments.length === 0 && !showAdd ? (
+          <p className="text-sm text-muted-foreground">
+            No adjustments. Use this for store cashback, coupons, manufacturer rebates — anything
+            that reduced what you actually paid below the receipt total.
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {adjustments.map((adj) => (
+              <li key={adj.id} className="flex items-center justify-between py-2">
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {locked ? (
+                    <span className="text-sm">{adj.categoryName}</span>
+                  ) : (
+                    <Select
+                      value={adj.categoryId}
+                      onChange={(e) => onPatch(adj.id, { categoryId: e.target.value })}
+                      className="h-8 text-sm"
+                    >
+                      {incomeCategories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </Select>
+                  )}
+                  {locked ? (
+                    <span className="text-sm text-muted-foreground italic">
+                      {adj.description ?? ''}
+                    </span>
+                  ) : (
+                    <Input
+                      defaultValue={adj.description ?? ''}
+                      placeholder="Optional note"
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v !== (adj.description ?? '')) {
+                          onPatch(adj.id, { description: v || null });
+                        }
+                      }}
+                      className="h-8 text-sm"
+                    />
+                  )}
+                  {locked ? (
+                    <span className="text-sm text-right font-mono">
+                      {formatCurrency(adj.amount, currencyCode)}
+                    </span>
+                  ) : (
+                    <Input
+                      type="number"
+                      step="0.01"
+                      defaultValue={adj.amount}
+                      onBlur={(e) => {
+                        const v = parseFloat(e.target.value);
+                        if (!Number.isNaN(v) && v > 0 && v !== adj.amount) {
+                          onPatch(adj.id, { amount: v });
+                        }
+                      }}
+                      className="h-8 text-right font-mono text-sm"
+                    />
+                  )}
+                </div>
+                {!locked && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(adj.id)}
+                    className="ml-3 text-xs text-destructive hover:underline"
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!locked && showAdd && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end border-t border-border pt-3">
+            <label className="space-y-1 text-sm">
+              <span className="text-xs text-muted-foreground">Income category</span>
+              <Select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="h-8 text-sm"
+              >
+                <option value="">— Select —</option>
+                {incomeCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs text-muted-foreground">Description (optional)</span>
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g. Walmart Rewards"
+                className="h-8 text-sm"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs text-muted-foreground">Amount</span>
+              <Input
+                type="number"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="h-8 text-right font-mono text-sm"
+              />
+            </label>
+            <div className="sm:col-span-3 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={reset}>Cancel</Button>
+              <Button
+                size="sm"
+                onClick={handleAdd}
+                disabled={!categoryId || !amount || pendingAdd}
+              >
+                {pendingAdd ? 'Adding…' : 'Add'}
+              </Button>
+            </div>
+            {incomeCategories.length === 0 && (
+              <p className="sm:col-span-3 text-xs text-destructive">
+                No income categories yet. Add one in Finance → Categories first.
+              </p>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

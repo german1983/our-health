@@ -446,6 +446,19 @@ export const chainProductCodes = pgTable(
   ],
 );
 
+export const receiptAdjustments = pgTable(
+  'receipt_adjustments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    receiptId: uuid('receipt_id').notNull().references(() => receipts.id, { onDelete: 'cascade' }),
+    categoryId: uuid('category_id').notNull().references(() => categories.id, { onDelete: 'restrict' }),
+    amount: doublePrecision('amount').notNull(),
+    description: text('description'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('receipt_adjustments_receipt_idx').on(t.receiptId)],
+);
+
 // ==================== Relations ====================
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -595,6 +608,7 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
   uploadedBy: one(users, { fields: [receipts.uploadedById], references: [users.id] }),
   items: many(receiptItems),
   transactions: many(transactions),
+  adjustments: many(receiptAdjustments),
 }));
 
 export const receiptItemsRelations = relations(receiptItems, ({ one, many }) => ({
@@ -619,4 +633,9 @@ export const chainTaxCodesRelations = relations(chainTaxCodes, ({ one }) => ({
 export const chainProductCodesRelations = relations(chainProductCodes, ({ one }) => ({
   chain: one(chains, { fields: [chainProductCodes.chainId], references: [chains.id] }),
   product: one(products, { fields: [chainProductCodes.productId], references: [products.id] }),
+}));
+
+export const receiptAdjustmentsRelations = relations(receiptAdjustments, ({ one }) => ({
+  receipt: one(receipts, { fields: [receiptAdjustments.receiptId], references: [receipts.id] }),
+  category: one(categories, { fields: [receiptAdjustments.categoryId], references: [categories.id] }),
 }));

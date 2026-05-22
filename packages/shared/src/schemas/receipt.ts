@@ -72,6 +72,31 @@ export const setItemFinanceCategorySchema = z.object({
 });
 export type SetItemFinanceCategoryInput = z.infer<typeof setItemFinanceCategorySchema>;
 
+export const createReceiptAdjustmentSchema = z.object({
+  categoryId: z.string().uuid(),
+  amount: z.number().positive(),
+  description: z.string().max(200).optional(),
+});
+export type CreateReceiptAdjustmentInput = z.infer<typeof createReceiptAdjustmentSchema>;
+
+export const updateReceiptAdjustmentSchema = z
+  .object({
+    categoryId: z.string().uuid().optional(),
+    amount: z.number().positive().optional(),
+    description: z.string().max(200).nullable().optional(),
+  })
+  .strict();
+export type UpdateReceiptAdjustmentInput = z.infer<typeof updateReceiptAdjustmentSchema>;
+
+export interface ReceiptAdjustmentResponse {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  amount: number;
+  description: string | null;
+  createdAt: string;
+}
+
 export interface TaxCategoryResponse {
   id: string;
   name: string;
@@ -125,5 +150,6 @@ export interface ReceiptResponse {
   defaultStorageSpaceId: string | null;
   defaultStorageSpaceName: string | null;
   items: ReceiptItemResponse[];
+  adjustments: ReceiptAdjustmentResponse[];
   createdAt: string;
 }
