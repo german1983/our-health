@@ -47,6 +47,7 @@ export const updateReceiptSchema = z
     currencyCode: z.string().length(3).optional(),
     paymentMethodId: z.string().uuid().nullable().optional(),
     defaultCategoryId: z.string().uuid().nullable().optional(),
+    defaultStorageSpaceId: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type UpdateReceiptInput = z.infer<typeof updateReceiptSchema>;
@@ -58,6 +59,8 @@ export const updateReceiptItemSchema = z
     unitPrice: z.number().nullable().optional(),
     lineTotal: z.number().optional(),
     financeCategoryId: z.string().uuid().nullable().optional(),
+    storageSpaceId: z.string().uuid().nullable().optional(),
+    expiryDate: z.string().datetime().nullable().optional(),
   })
   .strict();
 export type UpdateReceiptItemInput = z.infer<typeof updateReceiptItemSchema>;
@@ -68,6 +71,31 @@ export const setItemFinanceCategorySchema = z.object({
   applyToReceipt: z.boolean().default(true),
 });
 export type SetItemFinanceCategoryInput = z.infer<typeof setItemFinanceCategorySchema>;
+
+export const createReceiptAdjustmentSchema = z.object({
+  categoryId: z.string().uuid(),
+  amount: z.number().positive(),
+  description: z.string().max(200).optional(),
+});
+export type CreateReceiptAdjustmentInput = z.infer<typeof createReceiptAdjustmentSchema>;
+
+export const updateReceiptAdjustmentSchema = z
+  .object({
+    categoryId: z.string().uuid().optional(),
+    amount: z.number().positive().optional(),
+    description: z.string().max(200).nullable().optional(),
+  })
+  .strict();
+export type UpdateReceiptAdjustmentInput = z.infer<typeof updateReceiptAdjustmentSchema>;
+
+export interface ReceiptAdjustmentResponse {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  amount: number;
+  description: string | null;
+  createdAt: string;
+}
 
 export interface TaxCategoryResponse {
   id: string;
@@ -85,6 +113,9 @@ export interface ReceiptItemResponse {
   taxCategoryRate: number | null;
   financeCategoryId: string | null;
   financeCategoryName: string | null;
+  storageSpaceId: string | null;
+  storageSpaceName: string | null;
+  expiryDate: string | null;
   quantity: number;
   unitPrice: number | null;
   lineTotal: number;
@@ -116,6 +147,9 @@ export interface ReceiptResponse {
   paymentMethodName: string | null;
   defaultCategoryId: string | null;
   defaultCategoryName: string | null;
+  defaultStorageSpaceId: string | null;
+  defaultStorageSpaceName: string | null;
   items: ReceiptItemResponse[];
+  adjustments: ReceiptAdjustmentResponse[];
   createdAt: string;
 }

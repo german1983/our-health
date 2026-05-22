@@ -1,6 +1,6 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
-import { households, householdMembers, householdCurrencies } from '../../db/schema.js';
+import { categories, households, householdMembers, householdCurrencies } from '../../db/schema.js';
 import { NotFoundError, ConflictError, ForbiddenError } from '../../lib/errors.js';
 import type { CreateHouseholdInput, HouseholdDetailResponse, HouseholdMemberResponse } from '@personal-budget/shared';
 
@@ -26,6 +26,16 @@ export async function createHousehold(input: CreateHouseholdInput, userId: strin
       householdId: created.id,
       currencyCode: input.defaultCurrency,
       isDefault: true,
+    });
+
+    // Seed a default income category so receipt adjustments (cashback, etc.)
+    // have somewhere to land out of the box.
+    await tx.insert(categories).values({
+      householdId: created.id,
+      name: 'Cashback / Rewards',
+      type: 'INCOME',
+      sortOrder: 100,
+      icon: 'gift',
     });
 
     return created;
