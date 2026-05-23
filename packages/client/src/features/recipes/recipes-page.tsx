@@ -16,6 +16,7 @@ import {
   recipeToFormValues,
   type RecipeFormSubmitPayload,
 } from './recipe-form';
+import { NutritionLabel } from './nutrition-label';
 import { useNutritionMode } from '@/hooks/use-nutrition-mode';
 
 export function RecipesPage() {
@@ -24,6 +25,7 @@ export function RecipesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [labelRecipeId, setLabelRecipeId] = useState<string | null>(null);
   const [nutritionMode, setNutritionMode] = useNutritionMode();
 
   const { data: recipes } = useQuery({
@@ -37,7 +39,7 @@ export function RecipesPage() {
     enabled: tab === 'suggestions',
   });
 
-  const detailId = editingRecipeId ?? selectedRecipeId;
+  const detailId = editingRecipeId ?? labelRecipeId ?? selectedRecipeId;
   const { data: recipeDetail } = useQuery({
     queryKey: ['recipes', detailId],
     queryFn: () => api.get<RecipeDetailResponse>(`/recipes/${detailId}`).then((r) => r.data),
@@ -208,7 +210,7 @@ export function RecipesPage() {
 
       {/* Recipe Detail Dialog */}
       <Dialog
-        open={!!selectedRecipeId && !editingRecipeId && !!recipeDetail}
+        open={!!selectedRecipeId && !editingRecipeId && !labelRecipeId && !!recipeDetail}
         onClose={() => setSelectedRecipeId(null)}
         className="max-w-2xl"
       >
@@ -282,6 +284,16 @@ export function RecipesPage() {
                 Delete
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLabelRecipeId(recipeDetail.id);
+                  setSelectedRecipeId(null);
+                }}
+              >
+                Nutrition label
+              </Button>
+              <Button
                 size="sm"
                 onClick={() => {
                   setEditingRecipeId(recipeDetail.id);
@@ -326,6 +338,24 @@ export function RecipesPage() {
               onCancel={() => setEditingRecipeId(null)}
               onSubmit={(data) => updateMutation.mutate({ id: recipeDetail.id, data })}
             />
+          </>
+        )}
+      </Dialog>
+
+      {/* Nutrition Label Dialog */}
+      <Dialog
+        open={!!labelRecipeId && !!recipeDetail}
+        onClose={() => setLabelRecipeId(null)}
+      >
+        {recipeDetail && labelRecipeId === recipeDetail.id && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{recipeDetail.name} — Nutrition label</DialogTitle>
+            </DialogHeader>
+            <NutritionLabel recipe={recipeDetail} mode={nutritionMode} />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLabelRecipeId(null)}>Close</Button>
+            </DialogFooter>
           </>
         )}
       </Dialog>
