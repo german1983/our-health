@@ -17,7 +17,10 @@ import {
   transactions,
 } from '../../db/schema.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import { products } from '../../db/schema.js';
 import type {
+  AddReceiptItemInput,
+  CreateManualReceiptInput,
   CreateReceiptAdjustmentInput,
   UpdateReceiptAdjustmentInput,
   UpdateReceiptInput,
@@ -32,6 +35,7 @@ import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js'
 
 const receiptRelations = {
   chain: true,
+  matchedStore: true,
   paymentMethod: true,
   defaultCategory: true,
   defaultStorageSpace: true,
@@ -53,6 +57,7 @@ type ReceiptWithItems = {
   chainId: string | null;
   chain: { id: string; key: string; name: string } | null;
   storeId: string | null;
+  matchedStore: { name: string } | null;
   status: 'PENDING' | 'PARSED' | 'REVIEWED' | 'FAILED';
   purchasedAt: Date | null;
   subtotal: number | null;
@@ -212,6 +217,111 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
   });
 
   return getReceipt(receiptId, opts.householdId);
+}
+
+export async function createManualReceipt(args: {
+  input: CreateManualReceiptInput;
+  householdId: string;
+  userId: string;
+}): Promise<ReceiptResponse> {
+  const { input } = args;
+
+  if (input.storeId) {
+    const store = await db.query.stores.findFirst({
+      where: and(eq(stores.id, input.storeId), eq(stores.householdId, args.householdId)),
+    });
+    if (!store) throw new NotFoundError('Store');
+  }
+
+  let chainId: string | null = input.chainId ?? null;
+  if (!chainId && input.storeId) {
+    const store = await db.query.stores.findFirst({ where: eq(stores.id, input.storeId) });
+    chainId = store?.chainId ?? null;
+  }
+
+  const [created] = await db
+    .insert(receipts)
+    .values({
+      householdId: args.householdId,
+      uploadedById: args.userId,
+      storeId: input.storeId ?? null,
+      chainId,
+      parserVersion: 'manual',
+      rawText: input.description ?? '',
+      parsedData: null,
+      status: 'PARSED',
+      purchasedAt: input.purchasedAt ? new Date(input.purchasedAt) : null,
+      subtotal: input.subtotal ?? null,
+      tax: input.tax ?? null,
+      total: input.total ?? null,
+      currencyCode: input.currencyCode,
+      paymentMethodId: input.paymentMethodId ?? null,
+      defaultStorageSpaceId: input.defaultStorageSpaceId ?? null,
+      defaultCategoryId: input.defaultCategoryId ?? null,
+    })
+    .returning({ id: receipts.id });
+
+  return getReceipt(created.id, args.householdId);
+}
+
+export async function addReceiptItem(args: {
+  receiptId: string;
+  householdId: string;
+  data: AddReceiptItemInput;
+}): Promise<ReceiptResponse> {
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  ensureEditable(receipt.status);
+
+  const product = await db.query.products.findFirst({
+    where: eq(products.id, args.data.productId),
+  });
+  if (!product) throw new NotFoundError('Product');
+
+  if (args.data.storageSpaceId) {
+    const sp = await db.query.storageSpaces.findFirst({
+      where: and(
+        eq(storageSpaces.id, args.data.storageSpaceId),
+        eq(storageSpaces.householdId, args.householdId),
+      ),
+    });
+    if (!sp) throw new NotFoundError('Storage space');
+  }
+
+  await db.insert(receiptItems).values({
+    receiptId: args.receiptId,
+    productId: product.id,
+    rawName: args.data.rawName ?? product.name,
+    quantity: args.data.quantity,
+    unitPrice: args.data.unitPrice ?? null,
+    lineTotal: args.data.lineTotal,
+    taxCategoryId: args.data.taxCategoryId ?? null,
+    financeCategoryId: args.data.financeCategoryId ?? null,
+    storageSpaceId: args.data.storageSpaceId ?? null,
+    expiryDate: args.data.expiryDate ? new Date(args.data.expiryDate) : null,
+    matched: true,
+  });
+
+  return getReceipt(args.receiptId, args.householdId);
+}
+
+export async function deleteReceiptItem(args: {
+  itemId: string;
+  householdId: string;
+}): Promise<ReceiptResponse> {
+  const item = await db.query.receiptItems.findFirst({
+    where: eq(receiptItems.id, args.itemId),
+    with: { receipt: true },
+  });
+  if (!item || item.receipt.householdId !== args.householdId) {
+    throw new NotFoundError('Receipt item');
+  }
+  ensureEditable(item.receipt.status);
+
+  await db.delete(receiptItems).where(eq(receiptItems.id, args.itemId));
+  return getReceipt(item.receiptId, args.householdId);
 }
 
 /**
@@ -974,6 +1084,7 @@ function formatReceipt(receipt: ReceiptWithItems): ReceiptResponse {
     chainKey: receipt.chain?.key ?? null,
     chainName: receipt.chain?.name ?? null,
     storeId: receipt.storeId,
+    storeName: receipt.matchedStore?.name ?? null,
     status: receipt.status,
     purchasedAt: receipt.purchasedAt?.toISOString() ?? null,
     subtotal: receipt.subtotal,

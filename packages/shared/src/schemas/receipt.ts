@@ -17,6 +17,34 @@ export const createReceiptSchema = z.object({
 });
 export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
 
+export const createManualReceiptSchema = z.object({
+  purchasedAt: z.string().datetime().optional(),
+  storeId: z.string().uuid().optional(),
+  chainId: z.string().uuid().optional(),
+  currencyCode: z.string().length(3).default('CAD'),
+  paymentMethodId: z.string().uuid().optional(),
+  defaultStorageSpaceId: z.string().uuid().optional(),
+  defaultCategoryId: z.string().uuid().optional(),
+  subtotal: z.number().nullable().optional(),
+  tax: z.number().nullable().optional(),
+  total: z.number().nullable().optional(),
+  description: z.string().max(200).optional(),
+});
+export type CreateManualReceiptInput = z.infer<typeof createManualReceiptSchema>;
+
+export const addReceiptItemSchema = z.object({
+  productId: z.string().uuid(),
+  rawName: z.string().min(1).optional(),
+  quantity: z.number().positive().default(1),
+  unitPrice: z.number().nullable().optional(),
+  lineTotal: z.number(),
+  taxCategoryId: z.string().uuid().nullable().optional(),
+  financeCategoryId: z.string().uuid().nullable().optional(),
+  storageSpaceId: z.string().uuid().nullable().optional(),
+  expiryDate: z.string().datetime().nullable().optional(),
+});
+export type AddReceiptItemInput = z.infer<typeof addReceiptItemSchema>;
+
 export const confirmReceiptItemSchema = z.object({
   productId: z.string().uuid(),
   saveStoreCode: z.boolean().default(true),
@@ -139,6 +167,7 @@ export interface ReceiptResponse {
   chainKey: string | null;
   chainName: string | null;
   storeId: string | null;
+  storeName: string | null;
   status: ReceiptStatus;
   purchasedAt: string | null;
   subtotal: number | null;

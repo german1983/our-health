@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import {
+  addReceiptItemSchema,
   confirmReceiptItemSchema,
+  createManualReceiptSchema,
   createReceiptAdjustmentSchema,
   createReceiptSchema,
   matchReceiptItemSchema,
@@ -10,6 +12,8 @@ import {
   updateReceiptAdjustmentSchema,
   updateReceiptItemSchema,
   updateReceiptSchema,
+  type AddReceiptItemInput,
+  type CreateManualReceiptInput,
   type CreateReceiptAdjustmentInput,
   type UpdateReceiptAdjustmentInput,
   type UpdateReceiptInput,
@@ -57,6 +61,56 @@ router.post(
     }
   },
 );
+
+router.post(
+  '/manual',
+  authenticate,
+  requireHousehold,
+  validate(createManualReceiptSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.createManualReceipt({
+        input: req.body as CreateManualReceiptInput,
+        householdId: req.householdId!,
+        userId: req.userId!,
+      });
+      res.status(201).json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/:id/items',
+  authenticate,
+  requireHousehold,
+  validate(addReceiptItemSchema),
+  async (req, res, next) => {
+    try {
+      const receipt = await receiptService.addReceiptItem({
+        receiptId: req.params.id,
+        householdId: req.householdId!,
+        data: req.body as AddReceiptItemInput,
+      });
+      res.status(201).json(receipt);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete('/items/:itemId', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const receipt = await receiptService.deleteReceiptItem({
+      itemId: req.params.itemId,
+      householdId: req.householdId!,
+    });
+    res.json(receipt);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/', authenticate, requireHousehold, async (req, res, next) => {
   try {
