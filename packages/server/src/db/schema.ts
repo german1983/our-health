@@ -84,7 +84,8 @@ export const products = pgTable(
     brandId: uuid('brand_id').references(() => brands.id),
     imageUrl: text('image_url'),
     nutritionalFacts: jsonb('nutritional_facts').$type<NutritionalFacts | null>(),
-    nutritionBaseGrams: doublePrecision('nutrition_base_grams').notNull().default(100),
+    nutritionBaseAmount: doublePrecision('nutrition_base_amount').notNull().default(100),
+    nutritionBaseUnit: text('nutrition_base_unit').notNull().default('g'),
     offRawData: jsonb('off_raw_data').$type<unknown>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -316,7 +317,8 @@ export const productServingUnits = pgTable(
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    gramsEquivalent: doublePrecision('grams_equivalent').notNull(),
+    /** How many of the product's base unit (nutrition_base_unit) one of this serving equals. */
+    baseUnitEquivalent: doublePrecision('base_unit_equivalent').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -335,6 +337,8 @@ export const intakeEntries = pgTable(
     recipeId: uuid('recipe_id').references(() => recipes.id),
     quantity: doublePrecision('quantity').notNull(),
     servingUnitId: uuid('serving_unit_id').references(() => productServingUnits.id, { onDelete: 'set null' }),
+    /** Standard unit code (from units.ts). Mutually exclusive with servingUnitId. */
+    unit: text('unit'),
     notes: text('notes'),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

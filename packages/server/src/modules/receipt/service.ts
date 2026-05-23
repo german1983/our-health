@@ -590,7 +590,7 @@ export async function confirmReceipt(args: {
 }): Promise<ReceiptResponse> {
   const receipt = await db.query.receipts.findFirst({
     where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
-    with: { items: { with: { taxCategory: true } }, adjustments: true },
+    with: { items: { with: { taxCategory: true, product: true } }, adjustments: true },
   });
   if (!receipt) throw new NotFoundError('Receipt');
   if (receipt.status === 'REVIEWED') {
@@ -688,6 +688,7 @@ export async function confirmReceipt(args: {
       productId: string;
       receiptItemId: string;
       quantity: number;
+      unit: string;
       addedById: string;
       addedAt: Date;
       expiryDate: Date | null;
@@ -696,11 +697,18 @@ export async function confirmReceipt(args: {
     for (const snap of itemSnapshots) {
       const spaceId = snap.item.storageSpaceId ?? receipt.defaultStorageSpaceId;
       if (!spaceId || !snap.item.productId) continue;
+      // Default the storage unit to the matched product's nutrition base unit
+      // (e.g. "g" for grocery items, "unit" for countable goods). Receipt
+      // items don't carry a unit themselves; this is the most sensible guess.
+      const inferredUnit =
+        (snap.item as { product?: { nutritionBaseUnit?: string } | null }).product
+          ?.nutritionBaseUnit ?? 'unit';
       inventoryRows.push({
         storageSpaceId: spaceId,
         productId: snap.item.productId,
         receiptItemId: snap.item.id,
         quantity: snap.item.quantity,
+        unit: inferredUnit,
         addedById: args.userId,
         addedAt: inventoryDate,
         expiryDate: snap.item.expiryDate ?? null,

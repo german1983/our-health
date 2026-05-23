@@ -174,7 +174,7 @@ export function IntakePage() {
       setNewProductName(product.name);
       setNewProductBrand(product.brand ?? '');
       setBrandSearch(product.brand ?? '');
-      setNewProductBaseGrams(String(product.nutritionBaseGrams));
+      setNewProductBaseGrams(String(product.nutritionBaseAmount));
       setNewProductCalories(nf?.calories != null ? String(nf.calories) : '');
       setNewProductFat(nf?.fat != null ? String(nf.fat) : '');
       setNewProductCarbs(nf?.carbs != null ? String(nf.carbs) : '');
@@ -196,7 +196,8 @@ export function IntakePage() {
       name: string;
       barcode?: string;
       brand?: string;
-      nutritionBaseGrams?: number;
+      nutritionBaseAmount?: number;
+      nutritionBaseUnit?: string;
       nutritionalFacts?: Record<string, number>;
     }) => api.post<ProductResponse>('/products', data).then((r) => r.data),
     onSuccess: (product) => {
@@ -207,7 +208,7 @@ export function IntakePage() {
   });
 
   const createUnitMutation = useMutation({
-    mutationFn: (data: { productId: string; name: string; gramsEquivalent: number }) =>
+    mutationFn: (data: { productId: string; name: string; baseUnitEquivalent: number }) =>
       api.post('/intake/serving-units', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['intake', 'serving-units', selectedProductId] });
@@ -296,7 +297,7 @@ export function IntakePage() {
       name: newProductName,
       barcode: newProductBarcode || undefined,
       brand: newProductBrand || undefined,
-      nutritionBaseGrams: baseGrams && baseGrams !== 100 ? baseGrams : undefined,
+      nutritionBaseAmount: baseGrams && baseGrams !== 100 ? baseGrams : undefined,
       nutritionalFacts: Object.keys(nf).length > 0 ? nf : undefined,
     });
   }
@@ -319,7 +320,7 @@ export function IntakePage() {
     createUnitMutation.mutate({
       productId: selectedProductId,
       name: unitName,
-      gramsEquivalent: parseFloat(unitGrams),
+      baseUnitEquivalent: parseFloat(unitGrams),
     });
   }
 
@@ -496,7 +497,7 @@ export function IntakePage() {
                     <option value="">grams</option>
                     {servingUnits?.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.name} ({u.gramsEquivalent}g)
+                        {u.name} ({u.baseUnitEquivalent})
                       </option>
                     ))}
                   </Select>
@@ -824,11 +825,13 @@ export function IntakePage() {
                             {entry.quantity}{' '}
                             {entry.servingUnitName
                               ? entry.servingUnitName
-                              : entry.productId
-                                ? 'g'
-                                : 'serving(s)'}
-                            {entry.calculatedGrams != null && entry.servingUnitName && (
-                              <> ({entry.calculatedGrams}g)</>
+                              : entry.unit
+                                ? entry.unit
+                                : entry.productId
+                                  ? entry.calculatedUnit ?? 'g'
+                                  : 'serving(s)'}
+                            {entry.calculatedAmount != null && entry.servingUnitName && (
+                              <> ({entry.calculatedAmount}{entry.calculatedUnit ?? 'g'})</>
                             )}
                           </div>
                         </div>
@@ -902,7 +905,7 @@ export function IntakePage() {
                   <Select value={editServingUnitId} onChange={(e) => setEditServingUnitId(e.target.value)}>
                     <option value="">grams</option>
                     {editServingUnits?.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name} ({u.gramsEquivalent}g)</option>
+                      <option key={u.id} value={u.id}>{u.name} ({u.baseUnitEquivalent})</option>
                     ))}
                   </Select>
                 </div>

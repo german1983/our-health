@@ -98,7 +98,8 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
       brandId,
       imageUrl: input.imageUrl,
       nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
-      nutritionBaseGrams: input.nutritionBaseGrams ?? 100,
+      nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
+      nutritionBaseUnit: input.nutritionBaseUnit ?? 'g',
     })
     .returning();
 
@@ -286,7 +287,8 @@ function formatProduct(p: typeof products.$inferSelect): ProductResponse {
     brand: p.brand,
     imageUrl: p.imageUrl,
     nutritionalFacts: p.nutritionalFacts,
-    nutritionBaseGrams: p.nutritionBaseGrams,
+    nutritionBaseAmount: p.nutritionBaseAmount,
+    nutritionBaseUnit: p.nutritionBaseUnit,
     createdAt: p.createdAt.toISOString(),
   };
 }

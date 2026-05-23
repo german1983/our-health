@@ -2,6 +2,7 @@ import { and, eq, gt, desc, inArray } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import { recipes, recipeIngredients, storageItems, storageSpaces } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { areUnitsCompatible, convertUnit } from '@personal-budget/shared';
 import type {
   CreateRecipeInput,
   UpdateRecipeInput,
@@ -31,7 +32,12 @@ type RecipeWithRelations = {
     quantity: number;
     unit: string;
     notes: string | null;
-    product: { name: string; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams: number };
+    product: {
+      name: string;
+      nutritionalFacts: NutritionalFacts | null;
+      nutritionBaseAmount: number;
+      nutritionBaseUnit: string;
+    };
   }[];
 };
 
@@ -63,7 +69,8 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
     unit: ing.unit,
     notes: ing.notes,
     nutritionalFacts: ing.product.nutritionalFacts,
-    nutritionBaseGrams: ing.product.nutritionBaseGrams,
+    nutritionBaseAmount: ing.product.nutritionBaseAmount,
+    nutritionBaseUnit: ing.product.nutritionBaseUnit,
   }));
 
   const totalNutrition = calculateTotalNutrition(ingredients);
@@ -206,7 +213,13 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
 // ==================== Nutrition Helpers ====================
 
 function calculateTotalNutrition(
-  ingredients: { quantity: number; nutritionalFacts: NutritionalFacts | null; nutritionBaseGrams?: number }[],
+  ingredients: {
+    quantity: number;
+    unit: string;
+    nutritionalFacts: NutritionalFacts | null;
+    nutritionBaseAmount?: number;
+    nutritionBaseUnit?: string;
+  }[],
 ): NutritionalFacts {
   const total: NutritionalFacts = {
     calories: 0,
@@ -221,8 +234,14 @@ function calculateTotalNutrition(
 
   for (const ing of ingredients) {
     if (!ing.nutritionalFacts) continue;
-    const baseGrams = ing.nutritionBaseGrams || 100;
-    const factor = ing.quantity / baseGrams;
+    const baseAmount = ing.nutritionBaseAmount ?? 100;
+    const baseUnit = ing.nutritionBaseUnit ?? 'g';
+    // Convert the ingredient's quantity into the product's base unit; fall back
+    // to treating quantity as base units if the families don't match.
+    const qtyInBaseUnit = areUnitsCompatible(ing.unit, baseUnit)
+      ? convertUnit(ing.quantity, ing.unit, baseUnit)
+      : ing.quantity;
+    const factor = qtyInBaseUnit / baseAmount;
     const nf = ing.nutritionalFacts;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;

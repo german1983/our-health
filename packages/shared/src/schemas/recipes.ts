@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import type { NutritionalFacts } from './grocery.js';
+import { unitCodeSchema } from '../units.js';
 
 export const recipeIngredientSchema = z.object({
   productId: z.string().uuid(),
   quantity: z.number().positive(),
-  unit: z.string().min(1).max(50),
+  unit: unitCodeSchema,
   notes: z.string().max(200).optional(),
 });
 
