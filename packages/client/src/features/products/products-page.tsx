@@ -1,12 +1,23 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useState, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
-import type { ProductResponse } from '@personal-budget/shared';
+import { UNITS } from '@personal-budget/shared';
+import type { CreateProductInput, ProductResponse } from '@personal-budget/shared';
+import {
+  NUTRITION_FIELDS,
+  emptyNutritionForm,
+  formToNutrition,
+  type NutritionFormState,
+} from './nutrition-fields';
+
+const ALL_UNITS = Object.values(UNITS);
 
 interface ProductsResponse {
   items: ProductResponse[];
@@ -17,9 +28,19 @@ interface ProductsResponse {
 }
 
 export function ProductsPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const limit = 25;
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createBrand, setCreateBrand] = useState('');
+  const [createBarcode, setCreateBarcode] = useState('');
+  const [createImageUrl, setCreateImageUrl] = useState('');
+  const [createBaseAmount, setCreateBaseAmount] = useState('100');
+  const [createBaseUnit, setCreateBaseUnit] = useState('g');
+  const [createNutrition, setCreateNutrition] = useState<NutritionFormState>(emptyNutritionForm);
 
   const { data, isLoading } = useQuery({
     queryKey: ['products', 'list', searchQuery, page],
@@ -31,6 +52,41 @@ export function ProductsPage() {
         .then((r) => r.data),
   });
 
+  const createMutation = useMutation({
+    mutationFn: (input: CreateProductInput) =>
+      api.post<ProductResponse>('/products', input).then((r) => r.data),
+    onSuccess: (product) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setShowCreate(false);
+      resetCreateForm();
+      navigate(`/products/${product.id}`);
+    },
+  });
+
+  function resetCreateForm() {
+    setCreateName('');
+    setCreateBrand('');
+    setCreateBarcode('');
+    setCreateImageUrl('');
+    setCreateBaseAmount('100');
+    setCreateBaseUnit('g');
+    setCreateNutrition(emptyNutritionForm);
+  }
+
+  function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    const baseAmount = parseFloat(createBaseAmount);
+    createMutation.mutate({
+      name: createName.trim(),
+      brand: createBrand.trim() || undefined,
+      barcode: createBarcode.trim() || undefined,
+      imageUrl: createImageUrl.trim() || undefined,
+      nutritionBaseAmount: Number.isFinite(baseAmount) && baseAmount > 0 ? baseAmount : undefined,
+      nutritionBaseUnit: createBaseUnit,
+      nutritionalFacts: formToNutrition(createNutrition) ?? undefined,
+    });
+  }
+
   function hasNutrition(p: ProductResponse): boolean {
     const nf = p.nutritionalFacts;
     if (!nf) return false;
@@ -41,6 +97,7 @@ export function ProductsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Products</h1>
+        <Button onClick={() => setShowCreate(true)}>New product</Button>
       </div>
 
       <Card>
@@ -124,6 +181,119 @@ export function ProductsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* New Product Dialog */}
+      <Dialog
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        className="max-w-2xl"
+      >
+        <DialogHeader>
+          <DialogTitle>New product</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleCreate}>
+          <div className="space-y-4 max-h-[65vh] overflow-y-auto">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Name</label>
+                <Input
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Brand</label>
+                <Input
+                  value={createBrand}
+                  onChange={(e) => setCreateBrand(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Barcode</label>
+                <Input
+                  value={createBarcode}
+                  onChange={(e) => setCreateBarcode(e.target.value)}
+                  className="font-mono"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Image URL</label>
+                <Input
+                  value={createImageUrl}
+                  onChange={(e) => setCreateImageUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-border">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="font-medium">Nutritional facts per</span>
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={createBaseAmount}
+                  onChange={(e) => setCreateBaseAmount(e.target.value)}
+                  className="w-20"
+                />
+                <Select
+                  value={createBaseUnit}
+                  onChange={(e) => setCreateBaseUnit(e.target.value)}
+                  className="w-28"
+                >
+                  {ALL_UNITS.map((u) => (
+                    <option key={u.code} value={u.code}>{u.code}</option>
+                  ))}
+                </Select>
+                <span className="text-xs text-muted-foreground">(all optional)</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {NUTRITION_FIELDS.map(({ key, label, unit }) => (
+                  <div key={key} className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      {label} ({unit})
+                    </label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={createNutrition[key]}
+                      onChange={(e) =>
+                        setCreateNutrition({ ...createNutrition, [key]: e.target.value })
+                      }
+                      placeholder="-"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {createMutation.error && (
+              <p className="text-sm text-destructive">
+                {(createMutation.error as { response?: { data?: { error?: string } } }).response
+                  ?.data?.error || 'Failed to create product'}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setShowCreate(false);
+                resetCreateForm();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createMutation.isPending || !createName.trim()}>
+              {createMutation.isPending ? 'Creating...' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
     </div>
   );
 }
