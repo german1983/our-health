@@ -16,6 +16,7 @@ import {
   recipeToFormValues,
   type RecipeFormSubmitPayload,
 } from './recipe-form';
+import { useNutritionMode } from '@/hooks/use-nutrition-mode';
 
 export function RecipesPage() {
   const queryClient = useQueryClient();
@@ -23,6 +24,7 @@ export function RecipesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [nutritionMode, setNutritionMode] = useNutritionMode();
 
   const { data: recipes } = useQuery({
     queryKey: ['recipes'],
@@ -99,14 +101,33 @@ export function RecipesPage() {
         <Button onClick={() => setShowCreate(true)}>New Recipe</Button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2">
-        <Button size="sm" variant={tab === 'all' ? 'default' : 'outline'} onClick={() => setTab('all')}>
-          All Recipes
-        </Button>
-        <Button size="sm" variant={tab === 'suggestions' ? 'default' : 'outline'} onClick={() => setTab('suggestions')}>
-          Suggestions
-        </Button>
+      {/* Tabs + nutrition mode toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <Button size="sm" variant={tab === 'all' ? 'default' : 'outline'} onClick={() => setTab('all')}>
+            All Recipes
+          </Button>
+          <Button size="sm" variant={tab === 'suggestions' ? 'default' : 'outline'} onClick={() => setTab('suggestions')}>
+            Suggestions
+          </Button>
+        </div>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="text-muted-foreground mr-1">Show nutrition</span>
+          <Button
+            size="sm"
+            variant={nutritionMode === 'per100g' ? 'default' : 'outline'}
+            onClick={() => setNutritionMode('per100g')}
+          >
+            Per 100 g
+          </Button>
+          <Button
+            size="sm"
+            variant={nutritionMode === 'perServing' ? 'default' : 'outline'}
+            onClick={() => setNutritionMode('perServing')}
+          >
+            Per serving
+          </Button>
+        </div>
       </div>
 
       {/* Recipes List */}
@@ -121,11 +142,17 @@ export function RecipesPage() {
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-medium">{recipe.name}</h3>
-                  {recipe.caloriesPer100g != null && (
-                    <Badge variant="outline" className="text-xs whitespace-nowrap">
-                      {recipe.caloriesPer100g} kcal/100g
-                    </Badge>
-                  )}
+                  {nutritionMode === 'per100g'
+                    ? recipe.caloriesPer100g != null && (
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">
+                          {recipe.caloriesPer100g} kcal/100g
+                        </Badge>
+                      )
+                    : recipe.caloriesPerServing != null && (
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">
+                          {recipe.caloriesPerServing} kcal/{recipe.servingUnit ?? 'serving'}
+                        </Badge>
+                      )}
                 </div>
                 {recipe.description && <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{recipe.description}</p>}
                 <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
@@ -230,11 +257,17 @@ export function RecipesPage() {
               </div>
 
               {renderNutrition(recipeDetail.totalNutrition, 'Total nutrition')}
-              {renderNutrition(
-                recipeDetail.perServingNutrition,
-                `Per ${recipeDetail.servingUnit ?? 'serving'}${recipeDetail.servingWeightGrams != null ? ` (${recipeDetail.servingWeightGrams} g)` : ''}`,
+              {nutritionMode === 'per100g' && recipeDetail.per100gNutrition
+                ? renderNutrition(recipeDetail.per100gNutrition, 'Per 100 g')
+                : renderNutrition(
+                    recipeDetail.perServingNutrition,
+                    `Per ${recipeDetail.servingUnit ?? 'serving'}${recipeDetail.servingWeightGrams != null ? ` (${recipeDetail.servingWeightGrams} g)` : ''}`,
+                  )}
+              {nutritionMode === 'per100g' && !recipeDetail.per100gNutrition && (
+                <p className="text-xs text-muted-foreground">
+                  Set the recipe yield weight to see per-100 g values.
+                </p>
               )}
-              {recipeDetail.per100gNutrition && renderNutrition(recipeDetail.per100gNutrition, 'Per 100 g')}
             </div>
             <DialogFooter>
               <Button

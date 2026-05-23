@@ -338,9 +338,14 @@ function formatRecipe(
     recipe.servingWeightGrams != null && recipe.servings > 0
       ? recipe.servings * recipe.servingWeightGrams
       : null;
+  const totalCalories = extras?.totalNutrition?.calories ?? null;
   const caloriesPer100g =
-    totalWeightGrams && totalWeightGrams > 0 && extras?.totalNutrition?.calories != null
-      ? Math.round(((extras.totalNutrition.calories ?? 0) * 100) / totalWeightGrams * 10) / 10
+    totalWeightGrams && totalWeightGrams > 0 && totalCalories != null
+      ? Math.round((totalCalories * 100) / totalWeightGrams * 10) / 10
+      : null;
+  const caloriesPerServing =
+    recipe.servings > 0 && totalCalories != null
+      ? Math.round((totalCalories / recipe.servings) * 10) / 10
       : null;
   return {
     id: recipe.id,
@@ -351,6 +356,7 @@ function formatRecipe(
     servingWeightGrams: recipe.servingWeightGrams,
     totalWeightGrams,
     caloriesPer100g,
+    caloriesPerServing,
     prepTime: recipe.prepTime,
     cookTime: recipe.cookTime,
     imageUrl: recipe.imageUrl,

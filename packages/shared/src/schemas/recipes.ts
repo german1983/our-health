@@ -50,6 +50,8 @@ export interface RecipeResponse {
   totalWeightGrams: number | null;
   /** Calories per 100 g of recipe yield, when totalWeightGrams is known. */
   caloriesPer100g: number | null;
+  /** Calories per serving (one unit of yield). */
+  caloriesPerServing: number | null;
   prepTime: number | null;
   cookTime: number | null;
   imageUrl: string | null;
