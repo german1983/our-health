@@ -22,6 +22,16 @@ export const createProductSchema = z.object({
   nutritionBaseUnit: unitCodeSchema.optional(),
 });
 
+export const updateProductSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  brand: z.string().max(200).nullable().optional(),
+  barcode: z.string().nullable().optional(),
+  imageUrl: z.string().url().nullable().optional(),
+  nutritionalFacts: nutritionalFactsSchema.nullable().optional(),
+  nutritionBaseAmount: z.number().positive().optional(),
+  nutritionBaseUnit: unitCodeSchema.optional(),
+});
+
 export const createStoreSchema = z.object({
   name: z.string().min(1, 'Store name is required').max(200),
   location: z.string().max(500).optional(),
@@ -53,6 +63,7 @@ export const priceHistoryQuerySchema = z.object({
 
 export type NutritionalFacts = z.infer<typeof nutritionalFactsSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
+export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 export type CreateStoreInput = z.infer<typeof createStoreSchema>;
 export type UpdateStoreInput = z.infer<typeof updateStoreSchema>;
 export type CreatePriceRecordInput = z.infer<typeof createPriceRecordSchema>;
@@ -94,4 +105,33 @@ export interface PriceRecordResponse {
   currencyCode: string;
   recordedAt: string;
   recordedBy: string;
+}
+
+export interface ProductStorageEntry {
+  id: string;
+  storageSpaceId: string;
+  spaceName: string;
+  spaceType: 'FRIDGE' | 'FREEZER' | 'PANTRY' | 'CABINET' | 'OTHER';
+  quantity: number;
+  unit: string;
+  expiryDate: string | null;
+  addedAt: string;
+}
+
+export interface ProductPurchaseEntry {
+  receiptItemId: string;
+  receiptId: string;
+  purchasedAt: string | null;
+  storeId: string | null;
+  storeName: string | null;
+  rawName: string;
+  quantity: number;
+  unitPrice: number | null;
+  lineTotal: number;
+  currencyCode: string;
+}
+
+export interface ProductDetailResponse extends ProductResponse {
+  storageEntries: ProductStorageEntry[];
+  purchaseHistory: ProductPurchaseEntry[];
 }

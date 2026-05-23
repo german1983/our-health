@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createProductSchema,
+  updateProductSchema,
   createStoreSchema,
   updateStoreSchema,
   createPriceRecordSchema,
@@ -40,6 +41,30 @@ router.post('/products', authenticate, validate(createProductSchema), async (req
     next(err);
   }
 });
+
+router.get('/products/:id', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const detail = await groceryService.getProductDetail(req.params.id, req.householdId!);
+    res.json(detail);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch(
+  '/products/:id',
+  authenticate,
+  requireHousehold,
+  validate(updateProductSchema),
+  async (req, res, next) => {
+    try {
+      const product = await groceryService.updateProduct(req.params.id, req.body);
+      res.json(product);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // Brands
 router.get('/brands', authenticate, async (req, res, next) => {
