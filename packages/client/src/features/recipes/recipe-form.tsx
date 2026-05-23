@@ -26,6 +26,8 @@ export interface RecipeFormValues {
   name: string;
   description: string;
   servings: string;
+  servingUnit: string;
+  servingWeightGrams: string;
   prepTime: string;
   cookTime: string;
   ingredients: IngredientFormItem[];
@@ -35,6 +37,8 @@ export interface RecipeFormSubmitPayload {
   name: string;
   description?: string;
   servings: number;
+  servingUnit?: string;
+  servingWeightGrams?: number;
   prepTime?: number;
   cookTime?: number;
   ingredients: { productId: string; quantity: number; unit: string; notes?: string }[];
@@ -52,6 +56,8 @@ const EMPTY: RecipeFormValues = {
   name: '',
   description: '',
   servings: '4',
+  servingUnit: '',
+  servingWeightGrams: '',
   prepTime: '',
   cookTime: '',
   ingredients: [],
@@ -62,10 +68,16 @@ export function RecipeForm({ initialValues, submitLabel, submitting, onCancel, o
   const [name, setName] = useState(init.name);
   const [description, setDescription] = useState(init.description);
   const [servings, setServings] = useState(init.servings);
+  const [servingUnit, setServingUnit] = useState(init.servingUnit);
+  const [servingWeightGrams, setServingWeightGrams] = useState(init.servingWeightGrams);
   const [prepTime, setPrepTime] = useState(init.prepTime);
   const [cookTime, setCookTime] = useState(init.cookTime);
   const [ingredients, setIngredients] = useState<IngredientFormItem[]>(init.ingredients);
   const [ingredientSearch, setIngredientSearch] = useState('');
+
+  const servingsNum = parseInt(servings) || 0;
+  const weightNum = parseFloat(servingWeightGrams) || 0;
+  const totalWeight = servingsNum > 0 && weightNum > 0 ? servingsNum * weightNum : null;
 
   const { data: productResults } = useQuery({
     queryKey: ['products', 'search', ingredientSearch],
@@ -104,6 +116,8 @@ export function RecipeForm({ initialValues, submitLabel, submitting, onCancel, o
       name,
       description: description || undefined,
       servings: parseInt(servings) || 1,
+      servingUnit: servingUnit.trim() || undefined,
+      servingWeightGrams: weightNum > 0 ? weightNum : undefined,
       prepTime: prepTime ? parseInt(prepTime) : undefined,
       cookTime: cookTime ? parseInt(cookTime) : undefined,
       ingredients: ingredients.map((ing) => ({
@@ -126,16 +140,46 @@ export function RecipeForm({ initialValues, submitLabel, submitting, onCancel, o
           <label className="text-sm font-medium">Description</label>
           <Input value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Servings</label>
-            <Input
-              type="number"
-              value={servings}
-              onChange={(e) => setServings(e.target.value)}
-              required
-            />
+        <div className="space-y-1">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Makes</label>
+              <Input
+                type="number"
+                value={servings}
+                onChange={(e) => setServings(e.target.value)}
+                placeholder="2"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Unit name</label>
+              <Input
+                value={servingUnit}
+                onChange={(e) => setServingUnit(e.target.value)}
+                placeholder="e.g., bar, muffin"
+                maxLength={50}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Weight each (g)</label>
+              <Input
+                type="number"
+                step="0.1"
+                min="0"
+                value={servingWeightGrams}
+                onChange={(e) => setServingWeightGrams(e.target.value)}
+                placeholder="400"
+              />
+            </div>
           </div>
+          {totalWeight !== null && (
+            <p className="text-xs text-muted-foreground">
+              = {totalWeight} g total{servingUnit ? ` (${servingsNum} ${servingUnit}${servingsNum === 1 ? '' : 's'})` : ''}
+            </p>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           <div className="space-y-2">
             <label className="text-sm font-medium">Prep (min)</label>
             <Input
@@ -246,6 +290,8 @@ export function recipeToFormValues(recipe: RecipeDetailResponse): RecipeFormValu
     name: recipe.name,
     description: recipe.description ?? '',
     servings: String(recipe.servings),
+    servingUnit: recipe.servingUnit ?? '',
+    servingWeightGrams: recipe.servingWeightGrams != null ? String(recipe.servingWeightGrams) : '',
     prepTime: recipe.prepTime !== null ? String(recipe.prepTime) : '',
     cookTime: recipe.cookTime !== null ? String(recipe.cookTime) : '',
     ingredients: ingredientsToFormItems(recipe.ingredients),

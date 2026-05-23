@@ -44,10 +44,22 @@ type RecipeWithRelations = {
 export async function getRecipes(householdId: string): Promise<RecipeResponse[]> {
   const result = await db.query.recipes.findMany({
     where: eq(recipes.householdId, householdId),
-    with: { createdBy: true },
+    with: {
+      createdBy: true,
+      ingredients: { with: { product: true } },
+    },
     orderBy: desc(recipes.createdAt),
   });
-  return result.map(formatRecipe);
+  return result.map((r) => {
+    const ings = (r.ingredients ?? []).map((ing) => ({
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutritionalFacts: ing.product.nutritionalFacts,
+      nutritionBaseAmount: ing.product.nutritionBaseAmount,
+      nutritionBaseUnit: ing.product.nutritionBaseUnit,
+    }));
+    return formatRecipe(r, { totalNutrition: calculateTotalNutrition(ings) });
+  });
 }
 
 export async function getRecipe(id: string, householdId: string): Promise<RecipeDetailResponse> {
@@ -75,12 +87,14 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
 
   const totalNutrition = calculateTotalNutrition(ingredients);
   const perServingNutrition = divideNutrition(totalNutrition, recipe.servings);
+  const base = formatRecipe(recipe, { totalNutrition });
 
   return {
-    ...formatRecipe(recipe),
+    ...base,
     ingredients,
     totalNutrition,
     perServingNutrition,
+    per100gNutrition: per100gNutrition(totalNutrition, base.totalWeightGrams),
   };
 }
 
@@ -198,8 +212,16 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
 
     const matchScore = totalIngredients > 0 ? available.length / totalIngredients : 0;
 
+    const nutritionInputs = ings.map((ing) => ({
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutritionalFacts: ing.product.nutritionalFacts,
+      nutritionBaseAmount: ing.product.nutritionBaseAmount,
+      nutritionBaseUnit: ing.product.nutritionBaseUnit,
+    }));
+
     return {
-      ...formatRecipe(recipe),
+      ...formatRecipe(recipe, { totalNutrition: calculateTotalNutrition(nutritionInputs) }),
       availableIngredients: available.length,
       totalIngredients,
       missingIngredients: missing,
@@ -308,7 +330,18 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
   };
 }
 
-function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
+function formatRecipe(
+  recipe: RecipeWithRelations,
+  extras?: { totalNutrition?: NutritionalFacts },
+): RecipeResponse {
+  const totalWeightGrams =
+    recipe.servingWeightGrams != null && recipe.servings > 0
+      ? recipe.servings * recipe.servingWeightGrams
+      : null;
+  const caloriesPer100g =
+    totalWeightGrams && totalWeightGrams > 0 && extras?.totalNutrition?.calories != null
+      ? Math.round(((extras.totalNutrition.calories ?? 0) * 100) / totalWeightGrams * 10) / 10
+      : null;
   return {
     id: recipe.id,
     name: recipe.name,
@@ -316,6 +349,8 @@ function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
     servings: recipe.servings,
     servingUnit: recipe.servingUnit,
     servingWeightGrams: recipe.servingWeightGrams,
+    totalWeightGrams,
+    caloriesPer100g,
     prepTime: recipe.prepTime,
     cookTime: recipe.cookTime,
     imageUrl: recipe.imageUrl,
@@ -323,4 +358,12 @@ function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
     createdBy: recipe.createdBy.name,
     createdAt: recipe.createdAt.toISOString(),
   };
+}
+
+function per100gNutrition(
+  total: NutritionalFacts,
+  totalWeightGrams: number | null,
+): NutritionalFacts | null {
+  if (!totalWeightGrams || totalWeightGrams <= 0) return null;
+  return divideNutrition(total, totalWeightGrams / 100);
 }

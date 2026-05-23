@@ -46,6 +46,10 @@ export interface RecipeResponse {
   servings: number;
   servingUnit: string | null;
   servingWeightGrams: number | null;
+  /** servings × servingWeightGrams, when both are known. */
+  totalWeightGrams: number | null;
+  /** Calories per 100 g of recipe yield, when totalWeightGrams is known. */
+  caloriesPer100g: number | null;
   prepTime: number | null;
   cookTime: number | null;
   imageUrl: string | null;
@@ -58,6 +62,8 @@ export interface RecipeDetailResponse extends RecipeResponse {
   ingredients: RecipeIngredientResponse[];
   totalNutrition: NutritionalFacts;
   perServingNutrition: NutritionalFacts;
+  /** Nutrition normalized to 100 g of recipe yield, when totalWeightGrams is known. */
+  per100gNutrition: NutritionalFacts | null;
 }
 
 export interface RecipeSuggestionResponse extends RecipeResponse {

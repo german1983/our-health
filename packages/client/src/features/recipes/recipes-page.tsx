@@ -119,10 +119,21 @@ export function RecipesPage() {
               onClick={() => setSelectedRecipeId(recipe.id)}
             >
               <CardContent className="p-4">
-                <h3 className="font-medium">{recipe.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-medium">{recipe.name}</h3>
+                  {recipe.caloriesPer100g != null && (
+                    <Badge variant="outline" className="text-xs whitespace-nowrap">
+                      {recipe.caloriesPer100g} kcal/100g
+                    </Badge>
+                  )}
+                </div>
                 {recipe.description && <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{recipe.description}</p>}
                 <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
-                  <span>{recipe.servings} servings</span>
+                  <span>
+                    {recipe.servings} {recipe.servingUnit ?? 'serving'}
+                    {recipe.servings === 1 ? '' : 's'}
+                    {recipe.totalWeightGrams && ` · ${recipe.totalWeightGrams}g`}
+                  </span>
                   {recipe.prepTime && <span>Prep: {recipe.prepTime}min</span>}
                   {recipe.cookTime && <span>Cook: {recipe.cookTime}min</span>}
                 </div>
@@ -182,10 +193,28 @@ export function RecipesPage() {
             <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               {recipeDetail.description && <p className="text-sm text-muted-foreground">{recipeDetail.description}</p>}
 
-              <div className="flex gap-4 text-sm">
-                <span>{recipeDetail.servings} servings</span>
-                {recipeDetail.prepTime && <span>Prep: {recipeDetail.prepTime} min</span>}
-                {recipeDetail.cookTime && <span>Cook: {recipeDetail.cookTime} min</span>}
+              <div className="text-sm">
+                <div className="font-medium">
+                  Makes {recipeDetail.servings} {recipeDetail.servingUnit ?? 'serving'}
+                  {recipeDetail.servings === 1 ? '' : 's'}
+                  {recipeDetail.servingWeightGrams != null && (
+                    <>
+                      {' '}× {recipeDetail.servingWeightGrams} g
+                      {recipeDetail.totalWeightGrams != null && (
+                        <span className="text-muted-foreground">
+                          {' '}= {recipeDetail.totalWeightGrams} g total
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+                {(recipeDetail.prepTime || recipeDetail.cookTime) && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {recipeDetail.prepTime && <span>Prep: {recipeDetail.prepTime} min</span>}
+                    {recipeDetail.prepTime && recipeDetail.cookTime && <span> · </span>}
+                    {recipeDetail.cookTime && <span>Cook: {recipeDetail.cookTime} min</span>}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -200,8 +229,12 @@ export function RecipesPage() {
                 </div>
               </div>
 
-              {renderNutrition(recipeDetail.totalNutrition, 'Total Nutrition')}
-              {renderNutrition(recipeDetail.perServingNutrition, 'Per Serving')}
+              {renderNutrition(recipeDetail.totalNutrition, 'Total nutrition')}
+              {renderNutrition(
+                recipeDetail.perServingNutrition,
+                `Per ${recipeDetail.servingUnit ?? 'serving'}${recipeDetail.servingWeightGrams != null ? ` (${recipeDetail.servingWeightGrams} g)` : ''}`,
+              )}
+              {recipeDetail.per100gNutrition && renderNutrition(recipeDetail.per100gNutrition, 'Per 100 g')}
             </div>
             <DialogFooter>
               <Button
