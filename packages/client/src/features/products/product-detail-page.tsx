@@ -28,7 +28,13 @@ const NUTRITION_FIELDS: { key: keyof NutritionalFacts; label: string; unit: stri
   { key: 'sugars', label: 'Sugars', unit: 'g' },
   { key: 'fiber', label: 'Fiber', unit: 'g' },
   { key: 'protein', label: 'Protein', unit: 'g' },
-  { key: 'salt', label: 'Salt', unit: 'g' },
+  { key: 'cholesterol', label: 'Cholesterol', unit: 'mg' },
+  { key: 'sodium', label: 'Sodium', unit: 'mg' },
+  { key: 'potassium', label: 'Potassium', unit: 'mg' },
+  { key: 'calcium', label: 'Calcium', unit: 'mg' },
+  { key: 'iron', label: 'Iron', unit: 'mg' },
+  { key: 'vitaminA', label: 'Vitamin A', unit: 'µg' },
+  { key: 'vitaminD', label: 'Vitamin D', unit: 'µg' },
 ];
 
 type NutritionFormState = Record<keyof NutritionalFacts, string>;
@@ -41,7 +47,13 @@ const emptyNutritionForm: NutritionFormState = {
   sugars: '',
   fiber: '',
   protein: '',
-  salt: '',
+  sodium: '',
+  potassium: '',
+  calcium: '',
+  iron: '',
+  vitaminA: '',
+  vitaminD: '',
+  cholesterol: '',
 };
 
 function nutritionToForm(nf: NutritionalFacts | null): NutritionFormState {

@@ -229,7 +229,13 @@ function calculateTotalNutrition(
     sugars: 0,
     fiber: 0,
     protein: 0,
-    salt: 0,
+    sodium: 0,
+    potassium: 0,
+    calcium: 0,
+    iron: 0,
+    vitaminA: 0,
+    vitaminD: 0,
+    cholesterol: 0,
   };
 
   for (const ing of ingredients) {
@@ -250,7 +256,13 @@ function calculateTotalNutrition(
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0) * factor;
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0) * factor;
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0) * factor;
-    total.salt = (total.salt ?? 0) + (nf.salt ?? 0) * factor;
+    total.sodium = (total.sodium ?? 0) + (nf.sodium ?? 0) * factor;
+    total.potassium = (total.potassium ?? 0) + (nf.potassium ?? 0) * factor;
+    total.calcium = (total.calcium ?? 0) + (nf.calcium ?? 0) * factor;
+    total.iron = (total.iron ?? 0) + (nf.iron ?? 0) * factor;
+    total.vitaminA = (total.vitaminA ?? 0) + (nf.vitaminA ?? 0) * factor;
+    total.vitaminD = (total.vitaminD ?? 0) + (nf.vitaminD ?? 0) * factor;
+    total.cholesterol = (total.cholesterol ?? 0) + (nf.cholesterol ?? 0) * factor;
   }
 
   return roundNutrition(total);
@@ -266,7 +278,13 @@ function divideNutrition(total: NutritionalFacts, servings: number): Nutritional
     sugars: (total.sugars ?? 0) / servings,
     fiber: (total.fiber ?? 0) / servings,
     protein: (total.protein ?? 0) / servings,
-    salt: (total.salt ?? 0) / servings,
+    sodium: (total.sodium ?? 0) / servings,
+    potassium: (total.potassium ?? 0) / servings,
+    calcium: (total.calcium ?? 0) / servings,
+    iron: (total.iron ?? 0) / servings,
+    vitaminA: (total.vitaminA ?? 0) / servings,
+    vitaminD: (total.vitaminD ?? 0) / servings,
+    cholesterol: (total.cholesterol ?? 0) / servings,
   });
 }
 
@@ -280,7 +298,13 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
     sugars: round(nf.sugars),
     fiber: round(nf.fiber),
     protein: round(nf.protein),
-    salt: round(nf.salt),
+    sodium: round(nf.sodium),
+    potassium: round(nf.potassium),
+    calcium: round(nf.calcium),
+    iron: round(nf.iron),
+    vitaminA: round(nf.vitaminA),
+    vitaminD: round(nf.vitaminD),
+    cholesterol: round(nf.cholesterol),
   };
 }
 

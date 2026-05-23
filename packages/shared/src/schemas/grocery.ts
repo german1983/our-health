@@ -9,7 +9,13 @@ export const nutritionalFactsSchema = z.object({
   sugars: z.number().min(0).optional(),
   fiber: z.number().min(0).optional(),
   protein: z.number().min(0).optional(),
-  salt: z.number().min(0).optional(),
+  sodium: z.number().min(0).optional(),
+  potassium: z.number().min(0).optional(),
+  calcium: z.number().min(0).optional(),
+  iron: z.number().min(0).optional(),
+  vitaminA: z.number().min(0).optional(),
+  vitaminD: z.number().min(0).optional(),
+  cholesterol: z.number().min(0).optional(),
 });
 
 export const createProductSchema = z.object({
