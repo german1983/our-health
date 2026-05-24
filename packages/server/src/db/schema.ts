@@ -83,13 +83,38 @@ export const products = pgTable(
     brand: text('brand'),
     brandId: uuid('brand_id').references(() => brands.id),
     imageUrl: text('image_url'),
+    /** Owning finance category (drives the nutrition display gate). */
+    categoryId: uuid('category_id').references((): AnyPgColumn => categories.id, {
+      onDelete: 'set null',
+    }),
     nutritionalFacts: jsonb('nutritional_facts').$type<NutritionalFacts | null>(),
     nutritionBaseAmount: doublePrecision('nutrition_base_amount').notNull().default(100),
     nutritionBaseUnit: text('nutrition_base_unit').notNull().default('g'),
     offRawData: jsonb('off_raw_data').$type<unknown>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('products_brand_id_idx').on(t.brandId)],
+  (t) => [
+    index('products_brand_id_idx').on(t.brandId),
+    index('products_category_id_idx').on(t.categoryId),
+  ],
+);
+
+export const productPresentations = pgTable(
+  'product_presentations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    /** Human label, e.g. "800 g jar", "1 kg bag", "12-pack". */
+    name: text('name').notNull(),
+    /** How much of `unit` is in one of this presentation. */
+    amount: doublePrecision('amount').notNull(),
+    /** Unit code (e.g. 'g', 'ml', 'unit'). */
+    unit: text('unit').notNull(),
+    /** At most one default per product (enforced in service). */
+    isDefault: boolean('is_default').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('product_presentations_product_idx').on(t.productId)],
 );
 
 export const chains = pgTable('chains', {
@@ -213,6 +238,8 @@ export const categories = pgTable(
     level: integer('level').notNull().default(0),
     sortOrder: integer('sort_order').notNull().default(0),
     icon: text('icon'),
+    /** When true, products in this category show their nutritional facts. */
+    hasNutritionalFacts: boolean('has_nutritional_facts').notNull().default(false),
   },
   (t) => [
     index('categories_household_id_idx').on(t.householdId),
@@ -386,6 +413,7 @@ export const receiptItems = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     receiptId: uuid('receipt_id').notNull().references(() => receipts.id, { onDelete: 'cascade' }),
     productId: uuid('product_id').references(() => products.id),
+    presentationId: uuid('presentation_id').references(() => productPresentations.id, { onDelete: 'set null' }),
     rawName: text('raw_name').notNull(),
     rawCode: text('raw_code'),
     taxCode: text('tax_code'),
@@ -500,6 +528,7 @@ export const brandsRelations = relations(brands, ({ many }) => ({
 
 export const productsRelations = relations(products, ({ one, many }) => ({
   brandRef: one(brands, { fields: [products.brandId], references: [brands.id] }),
+  category: one(categories, { fields: [products.categoryId], references: [categories.id] }),
   priceRecords: many(priceRecords),
   storageItems: many(storageItems),
   recipeIngredients: many(recipeIngredients),
@@ -507,6 +536,12 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   productServingUnits: many(productServingUnits),
   receiptItems: many(receiptItems),
   chainCodes: many(chainProductCodes),
+  presentations: many(productPresentations),
+}));
+
+export const productPresentationsRelations = relations(productPresentations, ({ one, many }) => ({
+  product: one(products, { fields: [productPresentations.productId], references: [products.id] }),
+  receiptItems: many(receiptItems),
 }));
 
 export const storesRelations = relations(stores, ({ one, many }) => ({
@@ -618,6 +653,10 @@ export const receiptsRelations = relations(receipts, ({ one, many }) => ({
 export const receiptItemsRelations = relations(receiptItems, ({ one, many }) => ({
   receipt: one(receipts, { fields: [receiptItems.receiptId], references: [receipts.id] }),
   product: one(products, { fields: [receiptItems.productId], references: [products.id] }),
+  presentation: one(productPresentations, {
+    fields: [receiptItems.presentationId],
+    references: [productPresentations.id],
+  }),
   taxCategory: one(taxCategories, { fields: [receiptItems.taxCategoryId], references: [taxCategories.id] }),
   financeCategory: one(categories, { fields: [receiptItems.financeCategoryId], references: [categories.id] }),
   storageSpace: one(storageSpaces, { fields: [receiptItems.storageSpaceId], references: [storageSpaces.id] }),

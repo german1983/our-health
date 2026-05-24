@@ -9,6 +9,7 @@ export const createCategorySchema = z.object({
   type: categoryTypeEnum,
   icon: z.string().max(50).optional(),
   sortOrder: z.number().int().min(0).default(0),
+  hasNutritionalFacts: z.boolean().optional(),
 });
 
 export const updateCategorySchema = z.object({
@@ -16,6 +17,12 @@ export const updateCategorySchema = z.object({
   parentId: z.string().uuid().nullable().optional(),
   icon: z.string().max(50).optional(),
   sortOrder: z.number().int().min(0).optional(),
+  hasNutritionalFacts: z.boolean().optional(),
+  /**
+   * When true alongside `hasNutritionalFacts`, the new value is applied
+   * to every descendant of this category. Not persisted; one-shot action.
+   */
+  cascadeHasNutritionalFacts: z.boolean().optional(),
 });
 
 export const createTransactionSchema = z.object({
@@ -62,6 +69,7 @@ export interface CategoryResponse {
   level: number;
   icon: string | null;
   sortOrder: number;
+  hasNutritionalFacts: boolean;
   children?: CategoryResponse[];
 }
 

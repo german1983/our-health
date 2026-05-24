@@ -17,7 +17,7 @@ import {
   transactions,
 } from '../../db/schema.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
-import { products } from '../../db/schema.js';
+import { products, productPresentations } from '../../db/schema.js';
 import type {
   AddReceiptItemInput,
   CreateManualReceiptInput,
@@ -42,6 +42,7 @@ const receiptRelations = {
   items: {
     with: {
       product: true,
+      presentation: true,
       taxCategory: true,
       financeCategory: true,
       storageSpace: true,
@@ -102,7 +103,9 @@ type ReceiptItemWithProduct = {
   finalLineTotal: number | null;
   matched: boolean;
   productId: string | null;
-  product: { name: string } | null;
+  product: { name: string; nutritionBaseUnit?: string } | null;
+  presentationId: string | null;
+  presentation: { name: string; amount: number; unit: string } | null;
   taxCategory: { name: string; rate: number } | null;
   financeCategory: { name: string } | null;
   storageSpace: { name: string } | null;
@@ -156,6 +159,16 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         });
         taxCategoryId = taxMapping?.taxCategoryId ?? null;
       }
+      let presentationId: string | null = null;
+      if (productId) {
+        const def = await db.query.productPresentations.findFirst({
+          where: and(
+            eq(productPresentations.productId, productId),
+            eq(productPresentations.isDefault, true),
+          ),
+        });
+        presentationId = def?.id ?? null;
+      }
       return {
         rawName: item.rawName,
         rawCode: item.rawCode ?? null,
@@ -166,6 +179,7 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
         lineTotal: item.lineTotal,
         matched: !!productId,
         productId,
+        presentationId,
       };
     }),
   );
@@ -290,9 +304,30 @@ export async function addReceiptItem(args: {
     if (!sp) throw new NotFoundError('Storage space');
   }
 
+  let presentationId: string | null = args.data.presentationId ?? null;
+  if (presentationId) {
+    const p = await db.query.productPresentations.findFirst({
+      where: and(
+        eq(productPresentations.id, presentationId),
+        eq(productPresentations.productId, product.id),
+      ),
+    });
+    if (!p) throw new NotFoundError('Presentation');
+  } else if (args.data.presentationId === undefined) {
+    // No explicit choice — fall back to the product's default presentation, if any.
+    const def = await db.query.productPresentations.findFirst({
+      where: and(
+        eq(productPresentations.productId, product.id),
+        eq(productPresentations.isDefault, true),
+      ),
+    });
+    presentationId = def?.id ?? null;
+  }
+
   await db.insert(receiptItems).values({
     receiptId: args.receiptId,
     productId: product.id,
+    presentationId,
     rawName: args.data.rawName ?? product.name,
     quantity: args.data.quantity,
     unitPrice: args.data.unitPrice ?? null,
@@ -501,18 +536,38 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
     if (!product) throw new NotFoundError('Product');
   }
 
+  // Auto-apply the product's default presentation on match; clear on unmatch.
+  let defaultPresentationId: string | null = null;
+  if (args.productId) {
+    const def = await db.query.productPresentations.findFirst({
+      where: and(
+        eq(productPresentations.productId, args.productId),
+        eq(productPresentations.isDefault, true),
+      ),
+    });
+    defaultPresentationId = def?.id ?? null;
+  }
+
   await db.transaction(async (tx) => {
     // Update the receipt item itself.
     await tx
       .update(receiptItems)
-      .set({ productId: args.productId, matched: !!args.productId })
+      .set({
+        productId: args.productId,
+        matched: !!args.productId,
+        presentationId: args.productId ? defaultPresentationId : null,
+      })
       .where(eq(receiptItems.id, item.id));
 
     // Cascade to siblings sharing the same rawCode on the same receipt.
     if (args.applyToReceipt && item.rawCode) {
       await tx
         .update(receiptItems)
-        .set({ productId: args.productId, matched: !!args.productId })
+        .set({
+          productId: args.productId,
+          matched: !!args.productId,
+          presentationId: args.productId ? defaultPresentationId : null,
+        })
         .where(
           and(eq(receiptItems.receiptId, item.receiptId), eq(receiptItems.rawCode, item.rawCode)),
         );
@@ -600,6 +655,10 @@ function formatItem(item: ReceiptItemWithProduct): ReceiptItemResponse {
     matched: item.matched,
     productId: item.productId,
     productName: item.product?.name ?? null,
+    presentationId: item.presentationId,
+    presentationName: item.presentation?.name ?? null,
+    presentationAmount: item.presentation?.amount ?? null,
+    presentationUnit: item.presentation?.unit ?? null,
   };
 }
 
@@ -683,6 +742,17 @@ export async function updateReceiptItem(args: {
     if (!sp) throw new NotFoundError('Storage space');
   }
 
+  if (args.data.presentationId) {
+    const presentation = await db.query.productPresentations.findFirst({
+      where: eq(productPresentations.id, args.data.presentationId),
+    });
+    if (!presentation) throw new NotFoundError('Presentation');
+    // Presentations are bound to a product — must match the line's product.
+    if (item.productId && presentation.productId !== item.productId) {
+      throw new NotFoundError('Presentation');
+    }
+  }
+
   const updates: Record<string, unknown> = { ...args.data };
   if (args.data.expiryDate !== undefined) {
     updates.expiryDate = args.data.expiryDate ? new Date(args.data.expiryDate) : null;
@@ -700,7 +770,7 @@ export async function confirmReceipt(args: {
 }): Promise<ReceiptResponse> {
   const receipt = await db.query.receipts.findFirst({
     where: and(eq(receipts.id, args.receiptId), eq(receipts.householdId, args.householdId)),
-    with: { items: { with: { taxCategory: true, product: true } }, adjustments: true },
+    with: { items: { with: { taxCategory: true, product: true, presentation: true } }, adjustments: true },
   });
   if (!receipt) throw new NotFoundError('Receipt');
   if (receipt.status === 'REVIEWED') {
@@ -807,17 +877,25 @@ export async function confirmReceipt(args: {
     for (const snap of itemSnapshots) {
       const spaceId = snap.item.storageSpaceId ?? receipt.defaultStorageSpaceId;
       if (!spaceId || !snap.item.productId) continue;
-      // Default the storage unit to the matched product's nutrition base unit
-      // (e.g. "g" for grocery items, "unit" for countable goods). Receipt
-      // items don't carry a unit themselves; this is the most sensible guess.
+      // Prefer the chosen presentation: receipt qty × amount in its unit
+      // (e.g. 1 × 800 g jar -> 800 g). Otherwise fall back to the product's
+      // nutrition base unit at receipt qty (legacy behavior).
+      const presentation = (snap.item as {
+        presentation?: { amount: number; unit: string } | null;
+      }).presentation;
       const inferredUnit =
-        (snap.item as { product?: { nutritionBaseUnit?: string } | null }).product
-          ?.nutritionBaseUnit ?? 'unit';
+        presentation?.unit
+          ?? (snap.item as { product?: { nutritionBaseUnit?: string } | null }).product
+            ?.nutritionBaseUnit
+          ?? 'unit';
+      const inventoryQty = presentation
+        ? snap.item.quantity * presentation.amount
+        : snap.item.quantity;
       inventoryRows.push({
         storageSpaceId: spaceId,
         productId: snap.item.productId,
         receiptItemId: snap.item.id,
-        quantity: snap.item.quantity,
+        quantity: inventoryQty,
         unit: inferredUnit,
         addedById: args.userId,
         addedAt: inventoryDate,

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,21 @@ export function FinancePage() {
   const [catName, setCatName] = useState('');
   const [catType, setCatType] = useState<CategoryType>('EXPENSE');
   const [catParentId, setCatParentId] = useState('');
+  const [catHasNutrition, setCatHasNutrition] = useState(false);
+  // Whether the user has explicitly toggled the flag in this dialog session.
+  // Until they do, parent selection drives the value.
+  const [catNutritionTouched, setCatNutritionTouched] = useState(false);
+
+  // Edit-category dialog state. `editingCategory` holds the row being edited;
+  // `editOriginalNutrition` is the value at dialog-open time, so we can decide
+  // whether the user has actually changed the flag (and thus whether to surface
+  // the "apply to children" toggle).
+  const [editingCategory, setEditingCategory] = useState<CategoryResponse | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editParentId, setEditParentId] = useState('');
+  const [editHasNutrition, setEditHasNutrition] = useState(false);
+  const [editOriginalNutrition, setEditOriginalNutrition] = useState(false);
+  const [editCascade, setEditCascade] = useState(false);
 
   // Filters
   const [filterType, setFilterType] = useState<string>('');
@@ -101,14 +116,77 @@ export function FinancePage() {
   });
 
   const addCategoryMutation = useMutation({
-    mutationFn: (data: { name: string; type: CategoryType; parentId?: string }) =>
-      api.post('/finance/categories', data),
+    mutationFn: (data: {
+      name: string;
+      type: CategoryType;
+      parentId?: string;
+      hasNutritionalFacts?: boolean;
+    }) => api.post('/finance/categories', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['categories'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-categories'] });
       setShowAddCategory(false);
       setCatName('');
+      setCatParentId('');
+      setCatHasNutrition(false);
+      setCatNutritionTouched(false);
     },
   });
+
+  const updateCategoryMutation = useMutation({
+    mutationFn: (vars: {
+      id: string;
+      data: {
+        name?: string;
+        parentId?: string | null;
+        hasNutritionalFacts?: boolean;
+        cascadeHasNutritionalFacts?: boolean;
+      };
+    }) => api.patch(`/finance/categories/${vars.id}`, vars.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      queryClient.invalidateQueries({ queryKey: ['finance-categories'] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      setEditingCategory(null);
+    },
+  });
+
+  function openEditCategory(cat: CategoryResponse) {
+    setEditingCategory(cat);
+    setEditName(cat.name);
+    setEditParentId(cat.parentId ?? '');
+    setEditHasNutrition(cat.hasNutritionalFacts);
+    setEditOriginalNutrition(cat.hasNutritionalFacts);
+    setEditCascade(false);
+  }
+
+  /** Walk the category tree to find a node by id (for parent-flag lookup). */
+  function findCategoryById(
+    tree: CategoryResponse[] | undefined,
+    id: string,
+  ): CategoryResponse | null {
+    if (!tree) return null;
+    for (const cat of tree) {
+      if (cat.id === id) return cat;
+      if (cat.children) {
+        const hit = findCategoryById(cat.children, id);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
+  // Auto-fill the flag from the chosen parent until the user overrides it.
+  useEffect(() => {
+    if (catNutritionTouched) return;
+    if (!catParentId) {
+      setCatHasNutrition(false);
+      return;
+    }
+    const parent = findCategoryById(categories, catParentId);
+    setCatHasNutrition(parent?.hasNutritionalFacts ?? false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catParentId, categories, catNutritionTouched]);
 
   function flattenCategories(cats: CategoryResponse[], depth = 0): { id: string; name: string; type: CategoryType; depth: number }[] {
     const result: { id: string; name: string; type: CategoryType; depth: number }[] = [];
@@ -136,17 +214,66 @@ export function FinancePage() {
   function renderCategoryTree(cats: CategoryResponse[], depth = 0) {
     return cats.map((cat) => (
       <div key={cat.id}>
-        <div className="flex items-center justify-between py-1.5" style={{ paddingLeft: depth * 20 }}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm">{cat.name}</span>
+        <div
+          className="flex items-center justify-between py-1.5 group"
+          style={{ paddingLeft: depth * 20 }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm truncate">{cat.name}</span>
             <Badge variant={cat.type === 'INCOME' ? 'success' : 'secondary'} className="text-xs">
               {cat.type}
             </Badge>
+            {cat.hasNutritionalFacts && (
+              <Badge variant="outline" className="text-xs" title="Products in this category track nutritional facts">
+                🍎 Nutrition
+              </Badge>
+            )}
           </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="opacity-60 hover:opacity-100"
+            onClick={() => openEditCategory(cat)}
+          >
+            Edit
+          </Button>
         </div>
         {cat.children && renderCategoryTree(cat.children, depth + 1)}
       </div>
     ));
+  }
+
+  /** Whether `candidate` is `target` or a descendant of `target`. Used so the
+      edit dialog won't offer `target`'s own subtree as a new parent. */
+  function isSelfOrDescendant(
+    candidate: CategoryResponse,
+    targetId: string,
+    treeIdx: Map<string, CategoryResponse>,
+  ): boolean {
+    let cur: CategoryResponse | null = candidate;
+    while (cur) {
+      if (cur.id === targetId) return true;
+      cur = cur.parentId ? treeIdx.get(cur.parentId) ?? null : null;
+    }
+    return false;
+  }
+  const categoryIndex = (() => {
+    const m = new Map<string, CategoryResponse>();
+    function walk(nodes: CategoryResponse[] | undefined) {
+      if (!nodes) return;
+      for (const n of nodes) {
+        m.set(n.id, n);
+        walk(n.children);
+      }
+    }
+    walk(categories);
+    return m;
+  })();
+
+  /** Does the category (looked up in the loaded tree) have any children? */
+  function hasChildren(catId: string): boolean {
+    const cat = categoryIndex.get(catId);
+    return !!(cat?.children && cat.children.length > 0);
   }
 
   const currentSummary = summary?.[0];
@@ -353,6 +480,7 @@ export function FinancePage() {
             name: catName,
             type: catType,
             parentId: catParentId || undefined,
+            hasNutritionalFacts: catHasNutrition,
           });
         }}>
           <div className="space-y-4">
@@ -378,12 +506,128 @@ export function FinancePage() {
                   ))}
               </Select>
             </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={catHasNutrition}
+                onChange={(e) => {
+                  setCatNutritionTouched(true);
+                  setCatHasNutrition(e.target.checked);
+                }}
+              />
+              <span>
+                <span className="font-medium">Products track nutritional facts</span>
+                <span className="block text-xs text-muted-foreground">
+                  Check this for food categories (Groceries, etc.) so the app collects and
+                  displays calorie/macro info on each product. Leave unchecked for non-food
+                  categories like cleaning supplies or rent. Defaults to the parent's value.
+                </span>
+              </span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => setShowAddCategory(false)}>Cancel</Button>
             <Button type="submit" disabled={addCategoryMutation.isPending}>Create</Button>
           </DialogFooter>
         </form>
+      </Dialog>
+
+      {/* Edit Category Dialog */}
+      <Dialog open={editingCategory !== null} onClose={() => setEditingCategory(null)}>
+        <DialogHeader>
+          <DialogTitle>Edit {editingCategory?.name}</DialogTitle>
+        </DialogHeader>
+        {editingCategory && (
+          <form
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              const flagChanged = editHasNutrition !== editOriginalNutrition;
+              const parentChanged = (editParentId || null) !== (editingCategory.parentId ?? null);
+              updateCategoryMutation.mutate({
+                id: editingCategory.id,
+                data: {
+                  name: editName !== editingCategory.name ? editName : undefined,
+                  parentId: parentChanged ? (editParentId || null) : undefined,
+                  hasNutritionalFacts: flagChanged ? editHasNutrition : undefined,
+                  cascadeHasNutritionalFacts:
+                    editCascade && hasChildren(editingCategory.id) ? true : undefined,
+                },
+              });
+            }}
+          >
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Name</label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Parent (optional)</label>
+                <Select
+                  value={editParentId}
+                  onChange={(e) => setEditParentId(e.target.value)}
+                >
+                  <option value="">None (top-level)</option>
+                  {flatCategories
+                    .filter((c) => c.type === editingCategory.type)
+                    .filter((c) => {
+                      // Block selecting self or any descendant — would cycle the tree.
+                      const candidate = categoryIndex.get(c.id);
+                      if (!candidate) return false;
+                      return !isSelfOrDescendant(candidate, editingCategory.id, categoryIndex);
+                    })
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {'  '.repeat(c.depth)}{c.name}
+                      </option>
+                    ))}
+                </Select>
+              </div>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={editHasNutrition}
+                  onChange={(e) => setEditHasNutrition(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Products track nutritional facts</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Check for food categories so products under it show calories/macros. Leave
+                    unchecked for things like cleaning supplies.
+                  </span>
+                </span>
+              </label>
+              {/* "Apply to children" is only meaningful when the flag actually
+                  changed AND this category has descendants to cascade to. */}
+              {hasChildren(editingCategory.id) && editHasNutrition !== editOriginalNutrition && (
+                <label className="flex items-start gap-2 text-sm pl-6 border-l-2 border-muted-foreground/30">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={editCascade}
+                    onChange={(e) => setEditCascade(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Apply this choice to all child categories</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Recursively sets the same value on every descendant of {editingCategory.name}.
+                      One-shot — not stored.
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" type="button" onClick={() => setEditingCategory(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateCategoryMutation.isPending}>
+                {updateCategoryMutation.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </Dialog>
     </div>
   );

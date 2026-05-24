@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, Link2, Link2Off, Lock, Trash2, Unlock } from 'lucide-react';
@@ -727,6 +727,7 @@ export function ReceiptDetailPage() {
         open={pickerItem !== null}
         initialQuery={pickerItem?.rawName ?? ''}
         initialBarcode={pickerItem?.rawCode ?? null}
+        initialCategoryId={pickerItem?.financeCategoryId ?? receipt?.defaultCategoryId ?? null}
         onClose={() => setPickerItem(null)}
         onSelect={(productId) => {
           if (pickerItem) {
@@ -796,11 +797,23 @@ function ItemRow({
     <tr className={cn('border-b border-border last:border-0', fieldPending && 'opacity-60')}>
       <td className="px-4 py-2">
         {item.productName ? (
-          <div>
+          <div className="space-y-1">
             <div className="font-medium">{item.productName}</div>
             <div className="text-xs text-muted-foreground">
               receipt: {item.rawName}
             </div>
+            {item.productId && !locked && (
+              <PresentationSelector
+                productId={item.productId}
+                value={item.presentationId}
+                onChange={(presentationId) => onPatch({ presentationId })}
+              />
+            )}
+            {item.productId && locked && item.presentationName && (
+              <div className="text-xs text-muted-foreground">
+                As: {item.presentationName} ({item.presentationAmount} {item.presentationUnit})
+              </div>
+            )}
           </div>
         ) : locked ? (
           <span>{item.rawName}</span>
@@ -1454,6 +1467,42 @@ function BackLink() {
   );
 }
 
+interface PresentationSelectorProps {
+  productId: string;
+  value: string | null;
+  onChange: (presentationId: string | null) => void;
+}
+
+function PresentationSelector({ productId, value, onChange }: PresentationSelectorProps) {
+  const { data } = useQuery({
+    queryKey: ['products', 'detail', productId],
+    queryFn: () =>
+      api
+        .get<{ presentations: { id: string; name: string; amount: number; unit: string; isDefault: boolean }[] }>(
+          `/products/${productId}`,
+        )
+        .then((r) => r.data),
+    staleTime: 60_000,
+  });
+
+  if (!data || data.presentations.length === 0) return null;
+
+  return (
+    <Select
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value || null)}
+      className="h-7 text-xs min-w-[14rem] max-w-full"
+    >
+      <option value="">— No presentation (1 unit = 1 base unit) —</option>
+      {data.presentations.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name} ({p.amount} {p.unit}){p.isDefault ? ' · default' : ''}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 interface AddItemCardProps {
   currencyCode: string;
   storageSpaces: StorageSpaceResponse[];
@@ -1475,6 +1524,7 @@ function AddItemCard({
 }: AddItemCardProps) {
   const [search, setSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<ProductResponse | null>(null);
+  const [presentationId, setPresentationId] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [unitPrice, setUnitPrice] = useState('');
   const [lineTotal, setLineTotal] = useState('');
@@ -1492,6 +1542,25 @@ function AddItemCard({
     enabled: search.length > 1 && !selectedProduct,
   });
 
+  // Pull the product's presentations once one is picked, so we can offer them.
+  const { data: productDetail } = useQuery({
+    queryKey: ['products', 'detail', selectedProduct?.id],
+    queryFn: () =>
+      api
+        .get<{ presentations: { id: string; name: string; amount: number; unit: string; isDefault: boolean }[] }>(
+          `/products/${selectedProduct!.id}`,
+        )
+        .then((r) => r.data),
+    enabled: !!selectedProduct,
+  });
+
+  // Auto-select the default presentation when the product loads.
+  useEffect(() => {
+    if (!productDetail) return;
+    const def = productDetail.presentations.find((p) => p.isDefault);
+    setPresentationId(def?.id ?? '');
+  }, [productDetail]);
+
   function pickProduct(p: ProductResponse) {
     setSelectedProduct(p);
     setSearch(p.name);
@@ -1500,6 +1569,7 @@ function AddItemCard({
   function reset() {
     setSearch('');
     setSelectedProduct(null);
+    setPresentationId('');
     setQuantity('1');
     setUnitPrice('');
     setLineTotal('');
@@ -1520,6 +1590,7 @@ function AddItemCard({
 
     onAdd({
       productId: selectedProduct.id,
+      presentationId: presentationId || null,
       quantity: qty,
       unitPrice: up,
       lineTotal: lt,
@@ -1565,6 +1636,23 @@ function AddItemCard({
               </div>
             )}
           </div>
+
+          {selectedProduct && productDetail && productDetail.presentations.length > 0 && (
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Presentation (size sold as)</label>
+              <Select
+                value={presentationId}
+                onChange={(e) => setPresentationId(e.target.value)}
+              >
+                <option value="">— None (1 unit = 1 base unit) —</option>
+                {productDetail.presentations.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.amount} {p.unit}){p.isDefault ? ' · default' : ''}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="space-y-1">
