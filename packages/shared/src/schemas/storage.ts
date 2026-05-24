@@ -54,3 +54,23 @@ export interface StorageItemResponse {
   expiryDate: string | null;
   addedBy: string;
 }
+
+/**
+ * Aggregated stock for a single product. `totals` is grouped by unit so we
+ * don't merge across families (1 kg + 2 units stay separate). Each total
+ * gives the summed quantity converted into a canonical unit within that
+ * family — clients display them as-is.
+ */
+export interface InventoryByProductEntry {
+  productId: string;
+  productName: string;
+  /** Number of distinct storage lots that make up this row. */
+  lotCount: number;
+  totals: {
+    family: 'mass' | 'volume' | 'count' | 'unknown';
+    /** Canonical unit within the family (g, ml, unit) — or the raw unit if the
+        family is unknown. */
+    unit: string;
+    quantity: number;
+  }[];
+}

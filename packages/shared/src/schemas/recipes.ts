@@ -74,3 +74,35 @@ export interface RecipeSuggestionResponse extends RecipeResponse {
   missingIngredients: { productId: string; productName: string; quantity: number; unit: string }[];
   matchScore: number;
 }
+
+/**
+ * Per-ingredient availability for a recipe. `have` and `need` are normalized
+ * to the same canonical unit when conversion is possible (via physical units
+ * or the product's custom serving units); when not, `status` is 'unknown'
+ * and the caller should display a warning instead of a quantitative compare.
+ */
+export interface RecipeIngredientAvailability {
+  ingredientId: string;
+  productId: string;
+  productName: string;
+  /** As stored on the recipe. */
+  needed: number;
+  neededUnit: string;
+  /** Sum of compatible storage rows in `canonicalUnit`. */
+  have: number;
+  /** Unit used for the compare; usually the product's nutrition base unit. */
+  canonicalUnit: string;
+  /** Number of storage rows that couldn't be converted into the canonical unit. */
+  unconvertible: number;
+  status: 'sufficient' | 'short' | 'unknown';
+  /** Positive when short; in canonicalUnit. */
+  missing: number;
+}
+
+export interface RecipeAvailabilityResponse {
+  recipeId: string;
+  canCook: boolean;
+  /** Sum sufficient / total — 1.0 means every ingredient is covered. */
+  matchScore: number;
+  ingredients: RecipeIngredientAvailability[];
+}
