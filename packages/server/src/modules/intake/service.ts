@@ -2,7 +2,7 @@ import { and, eq, gte, lte, asc } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import { dailyLogs, intakeEntries, productServingUnits } from '../../db/schema.js';
 import { NotFoundError, ForbiddenError } from '../../lib/errors.js';
-import { areUnitsCompatible, convertUnit } from '@personal-budget/shared';
+import { areUnitsCompatible, convertUnit, productAwareConvert, type ProductCustomUnit } from '@personal-budget/shared';
 import type {
   NutritionalFacts,
   CreateIntakeEntryInput,
@@ -27,7 +27,10 @@ const ALL_MEAL_SLOTS: MealSlot[] = [
 ];
 
 const entryRelations = {
-  product: true,
+  // Pull the product *with* its full custom-unit list so the conversion
+  // engine can chain edges when the serving unit's targetUnit isn't the
+  // product's base unit (e.g. cross-family bridges).
+  product: { with: { productServingUnits: true } },
   recipe: { with: { ingredients: { with: { product: true } } } },
   servingUnit: true,
 } as const;
@@ -41,6 +44,7 @@ type EntryWithRelations = {
     nutritionalFacts: NutritionalFacts | null;
     nutritionBaseAmount: number;
     nutritionBaseUnit: string;
+    productServingUnits?: { name: string; baseUnitEquivalent: number; targetUnit: string | null }[];
   } | null;
   recipeId: string | null;
   recipe: {
@@ -58,7 +62,7 @@ type EntryWithRelations = {
   } | null;
   quantity: number;
   servingUnitId: string | null;
-  servingUnit: { name: string; baseUnitEquivalent: number } | null;
+  servingUnit: { name: string; baseUnitEquivalent: number; targetUnit: string | null } | null;
   unit: string | null;
   notes: string | null;
   sortOrder: number;
@@ -201,17 +205,22 @@ export async function deleteEntry(entryId: string, userId: string): Promise<void
 // Custom unit conversions for a product (e.g., "1 slice = 21 g"). Shared
 // across the household — anyone in the household can read/write them.
 
+function formatServingUnit(u: typeof productServingUnits.$inferSelect): ServingUnitResponse {
+  return {
+    id: u.id,
+    productId: u.productId,
+    name: u.name,
+    baseUnitEquivalent: u.baseUnitEquivalent,
+    targetUnit: u.targetUnit,
+  };
+}
+
 export async function getServingUnits(productId: string): Promise<ServingUnitResponse[]> {
   const units = await db.query.productServingUnits.findMany({
     where: eq(productServingUnits.productId, productId),
     orderBy: asc(productServingUnits.name),
   });
-  return units.map((u) => ({
-    id: u.id,
-    productId: u.productId,
-    name: u.name,
-    baseUnitEquivalent: u.baseUnitEquivalent,
-  }));
+  return units.map(formatServingUnit);
 }
 
 export async function createServingUnit(
@@ -223,14 +232,10 @@ export async function createServingUnit(
       productId: input.productId,
       name: input.name,
       baseUnitEquivalent: input.baseUnitEquivalent,
+      targetUnit: input.targetUnit ?? null,
     })
     .returning();
-  return {
-    id: unit.id,
-    productId: unit.productId,
-    name: unit.name,
-    baseUnitEquivalent: unit.baseUnitEquivalent,
-  };
+  return formatServingUnit(unit);
 }
 
 export async function updateServingUnit(
@@ -242,17 +247,17 @@ export async function updateServingUnit(
   });
   if (!existing) throw new NotFoundError('Serving unit');
 
+  const updates: Partial<typeof productServingUnits.$inferInsert> = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.baseUnitEquivalent !== undefined) updates.baseUnitEquivalent = input.baseUnitEquivalent;
+  if (input.targetUnit !== undefined) updates.targetUnit = input.targetUnit;
+
   const [unit] = await db
     .update(productServingUnits)
-    .set(input)
+    .set(updates)
     .where(eq(productServingUnits.id, id))
     .returning();
-  return {
-    id: unit.id,
-    productId: unit.productId,
-    name: unit.name,
-    baseUnitEquivalent: unit.baseUnitEquivalent,
-  };
+  return formatServingUnit(unit);
 }
 
 export async function deleteServingUnit(id: string): Promise<void> {
@@ -312,17 +317,22 @@ function calculateEntryNutrition(entry: EntryWithRelations): {
 
     const baseAmount = entry.product.nutritionBaseAmount || 100;
     const baseUnit = entry.product.nutritionBaseUnit || 'g';
+    const customs: ProductCustomUnit[] = entry.product.productServingUnits ?? [];
 
-    // Three cases for converting the entry's quantity into the product's base unit:
+    // Resolve the entry's quantity in the product's base unit. The chosen
+    // serving unit (or standard unit code) might be in a different family;
+    // productAwareConvert chains across custom edges when available.
     let totalInBaseUnit: number;
     if (entry.servingUnit) {
-      // Custom serving unit — its baseUnitEquivalent is already in the product's base unit.
-      totalInBaseUnit = entry.quantity * entry.servingUnit.baseUnitEquivalent;
-    } else if (entry.unit && areUnitsCompatible(entry.unit, baseUnit)) {
-      // Standard unit in the same family — convert via the units table.
-      totalInBaseUnit = convertUnit(entry.quantity, entry.unit, baseUnit);
+      const target = entry.servingUnit.targetUnit ?? baseUnit;
+      const inTarget = entry.quantity * entry.servingUnit.baseUnitEquivalent;
+      const converted = productAwareConvert(inTarget, target, baseUnit, { baseUnit, customUnits: customs });
+      totalInBaseUnit = converted ?? inTarget; // Fall back to the raw target value if no path.
+    } else if (entry.unit) {
+      const converted = productAwareConvert(entry.quantity, entry.unit, baseUnit, { baseUnit, customUnits: customs });
+      totalInBaseUnit = converted ?? entry.quantity;
     } else {
-      // No unit, or an incompatible one — assume quantity is already in the base unit.
+      // No unit at all — assume quantity is already in the base unit.
       totalInBaseUnit = entry.quantity;
     }
 

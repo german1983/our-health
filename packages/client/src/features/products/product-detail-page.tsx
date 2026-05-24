@@ -661,10 +661,10 @@ interface CustomUnitsCardProps {
 }
 
 /**
- * Defines product-specific unit conversions (e.g., "1 slice = 21 g"). The
- * left side is the named unit, the right side is always expressed in the
- * product's nutrition base unit. Recipes and intake use these to translate
- * between mass and count without the user doing the math.
+ * Defines product-specific unit conversions. The default target is the
+ * product's nutrition base unit (so "1 slice = 21 g" works for a g-based
+ * product), but a row can target any unit — that's how a single row also
+ * expresses cross-family equivalences like "1 g = 1 ml" (density).
  */
 function CustomUnitsCard({
   productId,
@@ -677,14 +677,21 @@ function CustomUnitsCard({
 }: CustomUnitsCardProps) {
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
+  const [target, setTarget] = useState('');
 
   function handleAdd(e: FormEvent) {
     e.preventDefault();
     const v = parseFloat(amount);
     if (!name.trim() || !Number.isFinite(v) || v <= 0) return;
-    onAdd({ productId, name: name.trim(), baseUnitEquivalent: v });
+    onAdd({
+      productId,
+      name: name.trim(),
+      baseUnitEquivalent: v,
+      targetUnit: target || null,
+    });
     setName('');
     setAmount('');
+    setTarget('');
   }
 
   return (
@@ -694,9 +701,12 @@ function CustomUnitsCard({
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground">
-          Product-specific conversions between named units and mass/volume. Example: define{' '}
-          <span className="font-mono">1 slice = 21 g</span> so recipes and intake can ask
-          for "2 slices of roast beef" and get 42 g.
+          Product-specific conversions. Examples:
+          {' '}<span className="font-mono">1 slice = 21 g</span> for sliced roast beef,
+          {' '}<span className="font-mono">1 g = 1 ml</span> for water (bridges mass and volume),
+          {' '}<span className="font-mono">1 cup = 240 ml</span> for liquids.
+          The engine chains these together — defining a g↔ml row opens every
+          mass and volume unit for this product.
         </p>
 
         {units.length > 0 && (
@@ -715,19 +725,19 @@ function CustomUnitsCard({
 
         <form
           onSubmit={handleAdd}
-          className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto_auto] gap-2 items-end pt-2 border-t border-border"
+          className="grid grid-cols-1 sm:grid-cols-[1fr_90px_110px_auto] gap-2 items-end pt-2 border-t border-border"
         >
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Unit name</label>
+            <label className="text-xs text-muted-foreground">1 of</label>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., slice, scoop, piece"
+              placeholder="e.g., slice, cup, g"
               required
             />
           </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">= amount in {baseUnit}</label>
+            <label className="text-xs text-muted-foreground">=</label>
             <Input
               type="number"
               step="0.01"
@@ -738,7 +748,15 @@ function CustomUnitsCard({
               required
             />
           </div>
-          <span className="text-xs text-muted-foreground pb-2">{baseUnit}</span>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">in</label>
+            <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">{baseUnit} (default)</option>
+              {ALL_UNITS.filter((u) => u.code !== baseUnit).map((u) => (
+                <option key={u.code} value={u.code}>{u.code}</option>
+              ))}
+            </Select>
+          </div>
           <Button type="submit" size="sm" disabled={adding || !name.trim() || !amount}>
             Add
           </Button>
@@ -759,29 +777,32 @@ function CustomUnitRow({ unit, baseUnit, onUpdate, onDelete }: CustomUnitRowProp
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(unit.name);
   const [amount, setAmount] = useState(String(unit.baseUnitEquivalent));
+  const [target, setTarget] = useState(unit.targetUnit ?? '');
+  const effectiveTarget = unit.targetUnit ?? baseUnit;
 
   function startEdit() {
     setName(unit.name);
     setAmount(String(unit.baseUnitEquivalent));
+    setTarget(unit.targetUnit ?? '');
     setEditing(true);
   }
 
   function save() {
     const v = parseFloat(amount);
     if (!name.trim() || !Number.isFinite(v) || v <= 0) return;
-    onUpdate({ name: name.trim(), baseUnitEquivalent: v });
+    onUpdate({ name: name.trim(), baseUnitEquivalent: v, targetUnit: target || null });
     setEditing(false);
   }
 
   if (editing) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto_auto] gap-2 items-end p-3 rounded border border-border bg-muted/30">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_90px_110px_auto_auto] gap-2 items-end p-3 rounded border border-border bg-muted/30">
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Unit name</label>
+          <label className="text-xs text-muted-foreground">1 of</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">= amount in {baseUnit}</label>
+          <label className="text-xs text-muted-foreground">=</label>
           <Input
             type="number"
             step="0.01"
@@ -790,7 +811,15 @@ function CustomUnitRow({ unit, baseUnit, onUpdate, onDelete }: CustomUnitRowProp
             onChange={(e) => setAmount(e.target.value)}
           />
         </div>
-        <span className="text-xs text-muted-foreground pb-2">{baseUnit}</span>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">in</label>
+          <Select value={target} onChange={(e) => setTarget(e.target.value)}>
+            <option value="">{baseUnit} (default)</option>
+            {ALL_UNITS.filter((u) => u.code !== baseUnit).map((u) => (
+              <option key={u.code} value={u.code}>{u.code}</option>
+            ))}
+          </Select>
+        </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
             Cancel
@@ -808,7 +837,7 @@ function CustomUnitRow({ unit, baseUnit, onUpdate, onDelete }: CustomUnitRowProp
       <div className="text-sm">
         <span className="font-mono">1 {unit.name}</span>
         <span className="text-muted-foreground"> = </span>
-        <span className="font-mono">{unit.baseUnitEquivalent} {baseUnit}</span>
+        <span className="font-mono">{unit.baseUnitEquivalent} {effectiveTarget}</span>
       </div>
       <div className="flex items-center gap-1">
         <Button size="sm" variant="ghost" onClick={startEdit}>

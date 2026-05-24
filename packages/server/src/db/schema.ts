@@ -344,8 +344,17 @@ export const productServingUnits = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    /** How many of the product's base unit (nutrition_base_unit) one of this serving equals. */
+    /** How many of `targetUnit` (or the product's base unit when null) one of this row equals. */
     baseUnitEquivalent: doublePrecision('base_unit_equivalent').notNull().default(0),
+    /**
+     * The unit `baseUnitEquivalent` is expressed in. Null means the product's
+     * `nutrition_base_unit` (preserves the original semantics for count-based
+     * conversions like "1 slice = 21 g" on a g-base product). Setting it to a
+     * different unit lets the same table express cross-family conversions —
+     * e.g., name="g", base_unit_equivalent=1, target_unit="ml" is a density
+     * row that bridges mass ↔ volume for this product.
+     */
+    targetUnit: text('target_unit'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
