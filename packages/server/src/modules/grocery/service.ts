@@ -3,6 +3,7 @@ import { db } from '../../lib/db.js';
 import {
   brands,
   products,
+  productPresentations,
   stores,
   priceRecords,
   storageItems,
@@ -15,6 +16,8 @@ import { fetchProductByBarcode } from '../../integrations/open-food-facts.js';
 import type {
   CreateProductInput,
   UpdateProductInput,
+  CreateProductPresentationInput,
+  UpdateProductPresentationInput,
   CreateStoreInput,
   UpdateStoreInput,
   CreatePriceRecordInput,
@@ -22,6 +25,7 @@ import type {
   NutritionalFacts,
   ProductResponse,
   ProductDetailResponse,
+  ProductPresentationResponse,
   ProductStorageEntry,
   ProductPurchaseEntry,
   StoreResponse,
@@ -154,11 +158,106 @@ export async function getProductDetail(id: string, householdId: string): Promise
     currencyCode: r.currencyCode,
   }));
 
+  const presentations = await getProductPresentations(id);
+
   return {
     ...formatProduct(product),
     storageEntries,
     purchaseHistory,
+    presentations,
   };
+}
+
+function formatPresentation(p: typeof productPresentations.$inferSelect): ProductPresentationResponse {
+  return {
+    id: p.id,
+    productId: p.productId,
+    name: p.name,
+    amount: p.amount,
+    unit: p.unit,
+    isDefault: p.isDefault,
+  };
+}
+
+export async function getProductPresentations(productId: string): Promise<ProductPresentationResponse[]> {
+  const rows = await db.query.productPresentations.findMany({
+    where: eq(productPresentations.productId, productId),
+    orderBy: [desc(productPresentations.isDefault), asc(productPresentations.name)],
+  });
+  return rows.map(formatPresentation);
+}
+
+export async function addProductPresentation(
+  productId: string,
+  input: CreateProductPresentationInput,
+): Promise<ProductPresentationResponse> {
+  const product = await db.query.products.findFirst({ where: eq(products.id, productId) });
+  if (!product) throw new NotFoundError('Product');
+
+  await db.transaction(async (tx) => {
+    if (input.isDefault) {
+      await tx
+        .update(productPresentations)
+        .set({ isDefault: false })
+        .where(eq(productPresentations.productId, productId));
+    }
+    await tx.insert(productPresentations).values({
+      productId,
+      name: input.name,
+      amount: input.amount,
+      unit: input.unit,
+      isDefault: input.isDefault ?? false,
+    });
+  });
+
+  const created = await db.query.productPresentations.findFirst({
+    where: and(
+      eq(productPresentations.productId, productId),
+      eq(productPresentations.name, input.name),
+    ),
+    orderBy: desc(productPresentations.createdAt),
+  });
+  return formatPresentation(created!);
+}
+
+export async function updateProductPresentation(
+  id: string,
+  input: UpdateProductPresentationInput,
+): Promise<ProductPresentationResponse> {
+  const existing = await db.query.productPresentations.findFirst({
+    where: eq(productPresentations.id, id),
+  });
+  if (!existing) throw new NotFoundError('Presentation');
+
+  await db.transaction(async (tx) => {
+    if (input.isDefault === true) {
+      await tx
+        .update(productPresentations)
+        .set({ isDefault: false })
+        .where(eq(productPresentations.productId, existing.productId));
+    }
+    const updates: Partial<typeof productPresentations.$inferInsert> = {};
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.amount !== undefined) updates.amount = input.amount;
+    if (input.unit !== undefined) updates.unit = input.unit;
+    if (input.isDefault !== undefined) updates.isDefault = input.isDefault;
+    if (Object.keys(updates).length > 0) {
+      await tx.update(productPresentations).set(updates).where(eq(productPresentations.id, id));
+    }
+  });
+
+  const updated = await db.query.productPresentations.findFirst({
+    where: eq(productPresentations.id, id),
+  });
+  return formatPresentation(updated!);
+}
+
+export async function deleteProductPresentation(id: string): Promise<void> {
+  const existing = await db.query.productPresentations.findFirst({
+    where: eq(productPresentations.id, id),
+  });
+  if (!existing) throw new NotFoundError('Presentation');
+  await db.delete(productPresentations).where(eq(productPresentations.id, id));
 }
 
 export async function updateProduct(id: string, input: UpdateProductInput): Promise<ProductResponse> {

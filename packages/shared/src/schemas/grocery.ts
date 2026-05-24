@@ -54,6 +54,17 @@ export const createPriceRecordSchema = z.object({
   currencyCode: z.string().length(3),
 });
 
+export const createProductPresentationSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100),
+  amount: z.number().positive('Amount must be positive'),
+  unit: unitCodeSchema,
+  isDefault: z.boolean().optional(),
+});
+export type CreateProductPresentationInput = z.infer<typeof createProductPresentationSchema>;
+
+export const updateProductPresentationSchema = createProductPresentationSchema.partial();
+export type UpdateProductPresentationInput = z.infer<typeof updateProductPresentationSchema>;
+
 export const productSearchSchema = z.object({
   query: z.string().optional(),
   barcode: z.string().optional(),
@@ -138,7 +149,17 @@ export interface ProductPurchaseEntry {
   currencyCode: string;
 }
 
+export interface ProductPresentationResponse {
+  id: string;
+  productId: string;
+  name: string;
+  amount: number;
+  unit: string;
+  isDefault: boolean;
+}
+
 export interface ProductDetailResponse extends ProductResponse {
   storageEntries: ProductStorageEntry[];
   purchaseHistory: ProductPurchaseEntry[];
+  presentations: ProductPresentationResponse[];
 }

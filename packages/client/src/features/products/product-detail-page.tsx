@@ -10,10 +10,13 @@ import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { UNITS } from '@personal-budget/shared';
 import type {
+  CreateProductPresentationInput,
   ProductDetailResponse,
+  ProductPresentationResponse,
   ProductStorageEntry,
   StorageSpaceResponse,
   UpdateProductInput,
+  UpdateProductPresentationInput,
   UpdateStorageItemInput,
 } from '@personal-budget/shared';
 import {
@@ -86,6 +89,29 @@ export function ProductDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
       queryClient.invalidateQueries({ queryKey: ['storage'] });
+    },
+  });
+
+  const addPresentationMutation = useMutation({
+    mutationFn: (data: CreateProductPresentationInput) =>
+      api.post(`/products/${id}/presentations`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+    },
+  });
+
+  const updatePresentationMutation = useMutation({
+    mutationFn: ({ pid, data }: { pid: string; data: UpdateProductPresentationInput }) =>
+      api.patch(`/products/presentations/${pid}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+    },
+  });
+
+  const deletePresentationMutation = useMutation({
+    mutationFn: (pid: string) => api.delete(`/products/presentations/${pid}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
     },
   });
 
@@ -227,6 +253,15 @@ export function ProductDetailPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Presentations / packaging */}
+      <PresentationsCard
+        presentations={product.presentations}
+        onAdd={(data) => addPresentationMutation.mutate(data)}
+        onUpdate={(pid, data) => updatePresentationMutation.mutate({ pid, data })}
+        onDelete={(pid) => deletePresentationMutation.mutate(pid)}
+        adding={addPresentationMutation.isPending}
+      />
 
       {/* Stock / Storage entries */}
       <Card>
@@ -414,3 +449,224 @@ function StorageEntryRow({ entry, spaces, onSave, onDelete, saving }: StorageEnt
     </div>
   );
 }
+
+interface PresentationsCardProps {
+  presentations: ProductPresentationResponse[];
+  onAdd: (data: CreateProductPresentationInput) => void;
+  onUpdate: (id: string, data: UpdateProductPresentationInput) => void;
+  onDelete: (id: string) => void;
+  adding: boolean;
+}
+
+function PresentationsCard({
+  presentations,
+  onAdd,
+  onUpdate,
+  onDelete,
+  adding,
+}: PresentationsCardProps) {
+  const [newName, setNewName] = useState('');
+  const [newAmount, setNewAmount] = useState('');
+  const [newUnit, setNewUnit] = useState('g');
+  const [newDefault, setNewDefault] = useState(false);
+
+  function reset() {
+    setNewName('');
+    setNewAmount('');
+    setNewUnit('g');
+    setNewDefault(false);
+  }
+
+  function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    const amt = parseFloat(newAmount);
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    onAdd({
+      name: newName.trim(),
+      amount: amt,
+      unit: newUnit,
+      isDefault: newDefault,
+    });
+    reset();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Presentations</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          How this product is sold. Receipts use the default to convert "1 unit" into a real
+          stock quantity (e.g., a 800 g jar adds 800 g, not 1 g).
+        </p>
+
+        {presentations.length > 0 && (
+          <div className="space-y-2">
+            {presentations.map((p) => (
+              <PresentationRow
+                key={p.id}
+                presentation={p}
+                onUpdate={(data) => onUpdate(p.id, data)}
+                onDelete={() => onDelete(p.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleAdd}
+          className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto_auto] gap-2 items-end pt-2 border-t border-border"
+        >
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Name</label>
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g., 800 g jar"
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Amount</label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={newAmount}
+              onChange={(e) => setNewAmount(e.target.value)}
+              placeholder="800"
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Unit</label>
+            <Select value={newUnit} onChange={(e) => setNewUnit(e.target.value)}>
+              {ALL_UNITS.map((u) => (
+                <option key={u.code} value={u.code}>{u.code}</option>
+              ))}
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground pb-2">
+            <input
+              type="checkbox"
+              checked={newDefault}
+              onChange={(e) => setNewDefault(e.target.checked)}
+            />
+            Default
+          </label>
+          <Button type="submit" size="sm" disabled={adding || !newName.trim() || !newAmount}>
+            Add
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface PresentationRowProps {
+  presentation: ProductPresentationResponse;
+  onUpdate: (data: UpdateProductPresentationInput) => void;
+  onDelete: () => void;
+}
+
+function PresentationRow({ presentation, onUpdate, onDelete }: PresentationRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(presentation.name);
+  const [amount, setAmount] = useState(String(presentation.amount));
+  const [unit, setUnit] = useState(presentation.unit);
+
+  function startEdit() {
+    setName(presentation.name);
+    setAmount(String(presentation.amount));
+    setUnit(presentation.unit);
+    setEditing(true);
+  }
+
+  function save() {
+    onUpdate({
+      name: name.trim(),
+      amount: parseFloat(amount),
+      unit,
+    });
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto] gap-2 items-end p-3 rounded border border-border bg-muted/30">
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Name</label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Amount</label>
+          <Input
+            type="number"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Unit</label>
+          <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+            {ALL_UNITS.map((u) => (
+              <option key={u.code} value={u.code}>{u.code}</option>
+            ))}
+          </Select>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save}>
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
+      <div className="min-w-0">
+        <div className="text-sm font-medium">
+          {presentation.name}
+          {presentation.isDefault && (
+            <Badge variant="secondary" className="ml-2 text-xs">Default</Badge>
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {presentation.amount} {presentation.unit}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        {!presentation.isDefault && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onUpdate({ isDefault: true })}
+            title="Make default"
+          >
+            Set default
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" onClick={startEdit}>
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            if (confirm(`Remove presentation "${presentation.name}"?`)) onDelete();
+          }}
+          className="text-destructive hover:text-destructive"
+        >
+          Remove
+        </Button>
+      </div>
+    </div>
+  );
+}
+

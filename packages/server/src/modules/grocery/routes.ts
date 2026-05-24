@@ -2,6 +2,8 @@ import { Router } from 'express';
 import {
   createProductSchema,
   updateProductSchema,
+  createProductPresentationSchema,
+  updateProductPresentationSchema,
   createStoreSchema,
   updateStoreSchema,
   createPriceRecordSchema,
@@ -60,6 +62,50 @@ router.patch(
     try {
       const product = await groceryService.updateProduct(req.params.id, req.body);
       res.json(product);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/products/:id/presentations',
+  authenticate,
+  requireHousehold,
+  validate(createProductPresentationSchema),
+  async (req, res, next) => {
+    try {
+      const presentation = await groceryService.addProductPresentation(req.params.id, req.body);
+      res.status(201).json(presentation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/products/presentations/:id',
+  authenticate,
+  requireHousehold,
+  validate(updateProductPresentationSchema),
+  async (req, res, next) => {
+    try {
+      const presentation = await groceryService.updateProductPresentation(req.params.id, req.body);
+      res.json(presentation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/products/presentations/:id',
+  authenticate,
+  requireHousehold,
+  async (req, res, next) => {
+    try {
+      await groceryService.deleteProductPresentation(req.params.id);
+      res.status(204).end();
     } catch (err) {
       next(err);
     }

@@ -34,6 +34,7 @@ export type CreateManualReceiptInput = z.infer<typeof createManualReceiptSchema>
 
 export const addReceiptItemSchema = z.object({
   productId: z.string().uuid(),
+  presentationId: z.string().uuid().nullable().optional(),
   rawName: z.string().min(1).optional(),
   quantity: z.number().positive().default(1),
   unitPrice: z.number().nullable().optional(),
@@ -89,6 +90,7 @@ export const updateReceiptItemSchema = z
     financeCategoryId: z.string().uuid().nullable().optional(),
     storageSpaceId: z.string().uuid().nullable().optional(),
     expiryDate: z.string().datetime().nullable().optional(),
+    presentationId: z.string().uuid().nullable().optional(),
   })
   .strict();
 export type UpdateReceiptItemInput = z.infer<typeof updateReceiptItemSchema>;
@@ -159,6 +161,11 @@ export interface ReceiptItemResponse {
   matched: boolean;
   productId: string | null;
   productName: string | null;
+  /** Presentation chosen for this line (governs storage qty on confirm). */
+  presentationId: string | null;
+  presentationName: string | null;
+  presentationAmount: number | null;
+  presentationUnit: string | null;
 }
 
 export interface ReceiptResponse {
