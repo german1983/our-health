@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, asc, desc, type SQL } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, asc, desc, type SQL } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import { categories, transactions } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
@@ -113,11 +113,48 @@ export async function updateCategory(
     }
   }
 
-  const [category] = await db
-    .update(categories)
-    .set({ ...input, level })
-    .where(eq(categories.id, id))
-    .returning();
+  // `cascadeHasNutritionalFacts` is a transient action flag, not a column.
+  const { cascadeHasNutritionalFacts, ...persisted } = input;
+
+  const category = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(categories)
+      .set({ ...persisted, level })
+      .where(eq(categories.id, id))
+      .returning();
+
+    // Recursive flag cascade: when explicitly requested, push the new
+    // hasNutritionalFacts value to every descendant in the household tree.
+    if (cascadeHasNutritionalFacts && input.hasNutritionalFacts !== undefined) {
+      const allRows = await tx.query.categories.findMany({
+        where: eq(categories.householdId, householdId),
+        columns: { id: true, parentId: true },
+      });
+      const childrenByParent = new Map<string, string[]>();
+      for (const r of allRows) {
+        if (!r.parentId) continue;
+        const list = childrenByParent.get(r.parentId);
+        if (list) list.push(r.id);
+        else childrenByParent.set(r.parentId, [r.id]);
+      }
+      const descendants: string[] = [];
+      const queue = [...(childrenByParent.get(id) ?? [])];
+      while (queue.length > 0) {
+        const next = queue.shift()!;
+        descendants.push(next);
+        const nextChildren = childrenByParent.get(next);
+        if (nextChildren) queue.push(...nextChildren);
+      }
+      if (descendants.length > 0) {
+        await tx
+          .update(categories)
+          .set({ hasNutritionalFacts: input.hasNutritionalFacts })
+          .where(inArray(categories.id, descendants));
+      }
+    }
+
+    return updated;
+  });
 
   return {
     id: category.id,
