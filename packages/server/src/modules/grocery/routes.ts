@@ -9,10 +9,12 @@ import {
   createStoreSchema,
   updateStoreSchema,
   createPriceRecordSchema,
+  nutritionScanSchema,
   productSearchSchema,
 } from '@personal-budget/shared';
 import { validate } from '../../middleware/validate.js';
 import { authenticate, requireHousehold } from '../../middleware/auth.js';
+import { parseNutritionLabel } from './nutrition-scan.js';
 import * as groceryService from './service.js';
 
 const router = Router();
@@ -47,6 +49,31 @@ router.get('/products', authenticate, validate(productSearchSchema, 'query'), as
     next(err);
   }
 });
+
+// Extract nutritional facts from a photographed label. Returns the parsed
+// numbers + the reference base amount/unit; the client applies them to the
+// form fields and the user can edit before saving.
+router.post(
+  '/products/nutrition-scan',
+  authenticate,
+  validate(nutritionScanSchema),
+  async (req, res, next) => {
+    try {
+      const { imageBase64 } = req.body as { imageBase64: string };
+      const dataUrl = imageBase64.startsWith('data:')
+        ? imageBase64
+        : `data:image/jpeg;base64,${imageBase64}`;
+      const result = await parseNutritionLabel(dataUrl);
+      res.json({
+        baseAmount: result.baseAmount,
+        baseUnit: result.baseUnit,
+        facts: result.facts,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.post('/products', authenticate, validate(createProductSchema), async (req, res, next) => {
   try {

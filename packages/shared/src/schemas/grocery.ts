@@ -64,6 +64,21 @@ export const updateProductImageSchema = z.object({
   isPrimary: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
 });
+
+export const nutritionScanSchema = z.object({
+  /** Base64 data URL (or bare base64) of a photographed nutrition label. */
+  imageBase64: z.string().min(1, 'Image data is required'),
+});
+export type NutritionScanInput = z.infer<typeof nutritionScanSchema>;
+
+export interface NutritionScanResponse {
+  /** Reference quantity printed on the label (per 100 g, per 30 g serving, etc.). */
+  baseAmount: number;
+  /** Unit the baseAmount is in (g, ml, etc.). */
+  baseUnit: string;
+  /** Extracted nutrient values, all per (baseAmount × baseUnit). */
+  facts: NutritionalFacts;
+}
 export type UpdateProductImageInput = z.infer<typeof updateProductImageSchema>;
 
 export const createStoreSchema = z.object({
