@@ -9,8 +9,10 @@ import {
   NUTRITION_FIELDS,
   emptyNutritionForm,
   formToNutrition,
+  nutritionToForm,
   type NutritionFormState,
 } from './nutrition-fields';
+import { NutritionScanButton } from './nutrition-scan-button';
 
 const ALL_UNITS = Object.values(UNITS);
 
@@ -230,7 +232,7 @@ export function ProductForm({ value, onChange, twoColumn = true }: ProductFormPr
 
       {showNutrition ? (
         <div className="space-y-2 pt-2 border-t border-border">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">Nutritional facts per</span>
             <Input
               type="number"
@@ -251,6 +253,18 @@ export function ProductForm({ value, onChange, twoColumn = true }: ProductFormPr
               ))}
             </Select>
             <span className="text-xs text-muted-foreground">(all optional)</span>
+            <div className="ml-auto flex items-center gap-2">
+              <NutritionScanButton
+                onScanned={(result) =>
+                  onChange({
+                    ...value,
+                    baseAmount: String(result.baseAmount),
+                    baseUnit: result.baseUnit,
+                    nutrition: nutritionToForm(result.facts),
+                  })
+                }
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {NUTRITION_FIELDS.map(({ key, label, unit }) => (

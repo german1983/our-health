@@ -33,6 +33,7 @@ import {
   nutritionToForm,
   type NutritionFormState,
 } from './nutrition-fields';
+import { NutritionScanButton } from './nutrition-scan-button';
 
 const ALL_UNITS = Object.values(UNITS);
 
@@ -295,7 +296,7 @@ export function ProductDetailPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSaveNutrition} className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-muted-foreground">Values per</span>
               <Input
                 type="number"
@@ -315,6 +316,15 @@ export function ProductDetailPage() {
                   </option>
                 ))}
               </Select>
+              <div className="ml-auto">
+                <NutritionScanButton
+                  onScanned={(result) => {
+                    setBaseAmount(String(result.baseAmount));
+                    setBaseUnit(result.baseUnit);
+                    setNutritionForm(nutritionToForm(result.facts));
+                  }}
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
