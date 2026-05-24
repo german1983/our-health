@@ -77,7 +77,13 @@ export function IntakePage() {
   const [newProductProtein, setNewProductProtein] = useState('');
   const [newProductSugars, setNewProductSugars] = useState('');
   const [newProductFiber, setNewProductFiber] = useState('');
-  const [newProductSalt, setNewProductSalt] = useState('');
+  const [newProductSodium, setNewProductSodium] = useState('');
+  const [newProductPotassium, setNewProductPotassium] = useState('');
+  const [newProductCalcium, setNewProductCalcium] = useState('');
+  const [newProductIron, setNewProductIron] = useState('');
+  const [newProductVitaminA, setNewProductVitaminA] = useState('');
+  const [newProductVitaminD, setNewProductVitaminD] = useState('');
+  const [newProductCholesterol, setNewProductCholesterol] = useState('');
   const [barcodeLookupError, setBarcodeLookupError] = useState('');
 
   // New serving unit form (inline within add dialog)
@@ -181,7 +187,13 @@ export function IntakePage() {
       setNewProductProtein(nf?.protein != null ? String(nf.protein) : '');
       setNewProductSugars(nf?.sugars != null ? String(nf.sugars) : '');
       setNewProductFiber(nf?.fiber != null ? String(nf.fiber) : '');
-      setNewProductSalt(nf?.salt != null ? String(nf.salt) : '');
+      setNewProductSodium(nf?.sodium != null ? String(nf.sodium) : '');
+      setNewProductPotassium(nf?.potassium != null ? String(nf.potassium) : '');
+      setNewProductCalcium(nf?.calcium != null ? String(nf.calcium) : '');
+      setNewProductIron(nf?.iron != null ? String(nf.iron) : '');
+      setNewProductVitaminA(nf?.vitaminA != null ? String(nf.vitaminA) : '');
+      setNewProductVitaminD(nf?.vitaminD != null ? String(nf.vitaminD) : '');
+      setNewProductCholesterol(nf?.cholesterol != null ? String(nf.cholesterol) : '');
       setBarcodeLookupError('');
       // Product already in DB — select it directly
       selectCreatedProduct(product);
@@ -263,7 +275,13 @@ export function IntakePage() {
     setNewProductProtein('');
     setNewProductSugars('');
     setNewProductFiber('');
-    setNewProductSalt('');
+    setNewProductSodium('');
+    setNewProductPotassium('');
+    setNewProductCalcium('');
+    setNewProductIron('');
+    setNewProductVitaminA('');
+    setNewProductVitaminD('');
+    setNewProductCholesterol('');
     setBarcodeLookupError('');
   }
 
@@ -289,7 +307,13 @@ export function IntakePage() {
     if (newProductProtein) nf.protein = parseFloat(newProductProtein);
     if (newProductSugars) nf.sugars = parseFloat(newProductSugars);
     if (newProductFiber) nf.fiber = parseFloat(newProductFiber);
-    if (newProductSalt) nf.salt = parseFloat(newProductSalt);
+    if (newProductSodium) nf.sodium = parseFloat(newProductSodium);
+    if (newProductPotassium) nf.potassium = parseFloat(newProductPotassium);
+    if (newProductCalcium) nf.calcium = parseFloat(newProductCalcium);
+    if (newProductIron) nf.iron = parseFloat(newProductIron);
+    if (newProductVitaminA) nf.vitaminA = parseFloat(newProductVitaminA);
+    if (newProductVitaminD) nf.vitaminD = parseFloat(newProductVitaminD);
+    if (newProductCholesterol) nf.cholesterol = parseFloat(newProductCholesterol);
 
     const baseGrams = parseFloat(newProductBaseGrams);
 
@@ -662,8 +686,32 @@ export function IntakePage() {
                 <Input type="number" step="any" min="0" value={newProductFiber} onChange={(e) => setNewProductFiber(e.target.value)} placeholder="-" />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Salt (g)</label>
-                <Input type="number" step="any" min="0" value={newProductSalt} onChange={(e) => setNewProductSalt(e.target.value)} placeholder="-" />
+                <label className="text-xs text-muted-foreground">Cholesterol (mg)</label>
+                <Input type="number" step="any" min="0" value={newProductCholesterol} onChange={(e) => setNewProductCholesterol(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Sodium (mg)</label>
+                <Input type="number" step="any" min="0" value={newProductSodium} onChange={(e) => setNewProductSodium(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Potassium (mg)</label>
+                <Input type="number" step="any" min="0" value={newProductPotassium} onChange={(e) => setNewProductPotassium(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Calcium (mg)</label>
+                <Input type="number" step="any" min="0" value={newProductCalcium} onChange={(e) => setNewProductCalcium(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Iron (mg)</label>
+                <Input type="number" step="any" min="0" value={newProductIron} onChange={(e) => setNewProductIron(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Vitamin A (µg)</label>
+                <Input type="number" step="any" min="0" value={newProductVitaminA} onChange={(e) => setNewProductVitaminA(e.target.value)} placeholder="-" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Vitamin D (µg)</label>
+                <Input type="number" step="any" min="0" value={newProductVitaminD} onChange={(e) => setNewProductVitaminD(e.target.value)} placeholder="-" />
               </div>
             </div>
           </div>

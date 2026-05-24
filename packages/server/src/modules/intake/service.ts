@@ -337,11 +337,18 @@ function calculateEntryNutrition(entry: EntryWithRelations): {
         calories: (nf.calories ?? 0) * factor,
         fat: (nf.fat ?? 0) * factor,
         saturatedFat: (nf.saturatedFat ?? 0) * factor,
+        transFat: (nf.transFat ?? 0) * factor,
         carbs: (nf.carbs ?? 0) * factor,
         sugars: (nf.sugars ?? 0) * factor,
         fiber: (nf.fiber ?? 0) * factor,
         protein: (nf.protein ?? 0) * factor,
-        salt: (nf.salt ?? 0) * factor,
+        sodium: (nf.sodium ?? 0) * factor,
+        potassium: (nf.potassium ?? 0) * factor,
+        calcium: (nf.calcium ?? 0) * factor,
+        iron: (nf.iron ?? 0) * factor,
+        vitaminA: (nf.vitaminA ?? 0) * factor,
+        vitaminD: (nf.vitaminD ?? 0) * factor,
+        cholesterol: (nf.cholesterol ?? 0) * factor,
       }),
     };
   }
@@ -360,7 +367,23 @@ function calculateRecipeTotalNutrition(
     };
   }[],
 ): NutritionalFacts {
-  const total: NutritionalFacts = { calories: 0, fat: 0, saturatedFat: 0, carbs: 0, sugars: 0, fiber: 0, protein: 0, salt: 0 };
+  const total: NutritionalFacts = {
+    calories: 0,
+    fat: 0,
+    saturatedFat: 0,
+    transFat: 0,
+    carbs: 0,
+    sugars: 0,
+    fiber: 0,
+    protein: 0,
+    sodium: 0,
+    potassium: 0,
+    calcium: 0,
+    iron: 0,
+    vitaminA: 0,
+    vitaminD: 0,
+    cholesterol: 0,
+  };
   for (const ing of ingredients) {
     const nf = ing.product.nutritionalFacts;
     if (!nf) continue;
@@ -381,11 +404,18 @@ function calculateRecipeTotalNutrition(
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0) * factor;
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0) * factor;
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0) * factor;
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0) * factor;
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0) * factor;
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0) * factor;
-    total.salt = (total.salt ?? 0) + (nf.salt ?? 0) * factor;
+    total.sodium = (total.sodium ?? 0) + (nf.sodium ?? 0) * factor;
+    total.potassium = (total.potassium ?? 0) + (nf.potassium ?? 0) * factor;
+    total.calcium = (total.calcium ?? 0) + (nf.calcium ?? 0) * factor;
+    total.iron = (total.iron ?? 0) + (nf.iron ?? 0) * factor;
+    total.vitaminA = (total.vitaminA ?? 0) + (nf.vitaminA ?? 0) * factor;
+    total.vitaminD = (total.vitaminD ?? 0) + (nf.vitaminD ?? 0) * factor;
+    total.cholesterol = (total.cholesterol ?? 0) + (nf.cholesterol ?? 0) * factor;
   }
   return roundNutrition(total);
 }
@@ -396,11 +426,18 @@ function divideNutrition(nf: NutritionalFacts, divisor: number): NutritionalFact
     calories: (nf.calories ?? 0) / divisor,
     fat: (nf.fat ?? 0) / divisor,
     saturatedFat: (nf.saturatedFat ?? 0) / divisor,
+    transFat: (nf.transFat ?? 0) / divisor,
     carbs: (nf.carbs ?? 0) / divisor,
     sugars: (nf.sugars ?? 0) / divisor,
     fiber: (nf.fiber ?? 0) / divisor,
     protein: (nf.protein ?? 0) / divisor,
-    salt: (nf.salt ?? 0) / divisor,
+    sodium: (nf.sodium ?? 0) / divisor,
+    potassium: (nf.potassium ?? 0) / divisor,
+    calcium: (nf.calcium ?? 0) / divisor,
+    iron: (nf.iron ?? 0) / divisor,
+    vitaminA: (nf.vitaminA ?? 0) / divisor,
+    vitaminD: (nf.vitaminD ?? 0) / divisor,
+    cholesterol: (nf.cholesterol ?? 0) / divisor,
   });
 }
 
@@ -413,22 +450,51 @@ function multiplyNutrition(nf: NutritionalFacts, factor: number): NutritionalFac
     sugars: (nf.sugars ?? 0) * factor,
     fiber: (nf.fiber ?? 0) * factor,
     protein: (nf.protein ?? 0) * factor,
-    salt: (nf.salt ?? 0) * factor,
+    sodium: (nf.sodium ?? 0) * factor,
+    potassium: (nf.potassium ?? 0) * factor,
+    calcium: (nf.calcium ?? 0) * factor,
+    iron: (nf.iron ?? 0) * factor,
+    vitaminA: (nf.vitaminA ?? 0) * factor,
+    vitaminD: (nf.vitaminD ?? 0) * factor,
+    cholesterol: (nf.cholesterol ?? 0) * factor,
   });
 }
 
 function sumNutrition(items: (NutritionalFacts | null)[]): NutritionalFacts {
-  const total: NutritionalFacts = { calories: 0, fat: 0, saturatedFat: 0, carbs: 0, sugars: 0, fiber: 0, protein: 0, salt: 0 };
+  const total: NutritionalFacts = {
+    calories: 0,
+    fat: 0,
+    saturatedFat: 0,
+    transFat: 0,
+    carbs: 0,
+    sugars: 0,
+    fiber: 0,
+    protein: 0,
+    sodium: 0,
+    potassium: 0,
+    calcium: 0,
+    iron: 0,
+    vitaminA: 0,
+    vitaminD: 0,
+    cholesterol: 0,
+  };
   for (const nf of items) {
     if (!nf) continue;
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0);
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0);
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0);
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0);
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0);
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0);
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0);
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0);
-    total.salt = (total.salt ?? 0) + (nf.salt ?? 0);
+    total.sodium = (total.sodium ?? 0) + (nf.sodium ?? 0);
+    total.potassium = (total.potassium ?? 0) + (nf.potassium ?? 0);
+    total.calcium = (total.calcium ?? 0) + (nf.calcium ?? 0);
+    total.iron = (total.iron ?? 0) + (nf.iron ?? 0);
+    total.vitaminA = (total.vitaminA ?? 0) + (nf.vitaminA ?? 0);
+    total.vitaminD = (total.vitaminD ?? 0) + (nf.vitaminD ?? 0);
+    total.cholesterol = (total.cholesterol ?? 0) + (nf.cholesterol ?? 0);
   }
   return roundNutrition(total);
 }
@@ -439,11 +505,18 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
     calories: round(nf.calories),
     fat: round(nf.fat),
     saturatedFat: round(nf.saturatedFat),
+    transFat: round(nf.transFat),
     carbs: round(nf.carbs),
     sugars: round(nf.sugars),
     fiber: round(nf.fiber),
     protein: round(nf.protein),
-    salt: round(nf.salt),
+    sodium: round(nf.sodium),
+    potassium: round(nf.potassium),
+    calcium: round(nf.calcium),
+    iron: round(nf.iron),
+    vitaminA: round(nf.vitaminA),
+    vitaminD: round(nf.vitaminD),
+    cholesterol: round(nf.cholesterol),
   };
 }
 

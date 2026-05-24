@@ -7,6 +7,8 @@ import { RegisterPage } from '@/features/auth/register-page';
 import { DashboardPage } from '@/features/dashboard/dashboard-page';
 import { HouseholdPage } from '@/features/household/household-page';
 import { GroceryPage } from '@/features/grocery/grocery-page';
+import { ProductsPage } from '@/features/products/products-page';
+import { ProductDetailPage } from '@/features/products/product-detail-page';
 import { StoragePage } from '@/features/storage/storage-page';
 import { RecipesPage } from '@/features/recipes/recipes-page';
 import { FinancePage } from '@/features/finance/finance-page';
@@ -37,6 +39,8 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/household" element={<HouseholdPage />} />
               <Route path="/grocery" element={<GroceryPage />} />
+              <Route path="/products" element={<ProductsPage />} />
+              <Route path="/products/:id" element={<ProductDetailPage />} />
               <Route path="/storage" element={<StoragePage />} />
               <Route path="/recipes" element={<RecipesPage />} />
               <Route path="/finance" element={<FinancePage />} />

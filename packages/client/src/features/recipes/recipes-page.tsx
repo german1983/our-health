@@ -1,12 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
-import { UNITS } from '@personal-budget/shared';
-
-const ALL_UNITS = Object.values(UNITS);
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
@@ -14,32 +9,24 @@ import type {
   RecipeResponse,
   RecipeDetailResponse,
   RecipeSuggestionResponse,
-  ProductResponse,
   NutritionalFacts,
 } from '@personal-budget/shared';
-
-interface IngredientForm {
-  productId: string;
-  productName: string;
-  quantity: string;
-  unit: string;
-  notes: string;
-}
+import {
+  RecipeForm,
+  recipeToFormValues,
+  type RecipeFormSubmitPayload,
+} from './recipe-form';
+import { NutritionLabel } from './nutrition-label';
+import { useNutritionMode } from '@/hooks/use-nutrition-mode';
 
 export function RecipesPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'all' | 'suggestions'>('all');
   const [showCreate, setShowCreate] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
-
-  // Create form
-  const [recipeName, setRecipeName] = useState('');
-  const [recipeDesc, setRecipeDesc] = useState('');
-  const [recipeServings, setRecipeServings] = useState('4');
-  const [recipePrepTime, setRecipePrepTime] = useState('');
-  const [recipeCookTime, setRecipeCookTime] = useState('');
-  const [ingredients, setIngredients] = useState<IngredientForm[]>([]);
-  const [ingredientSearch, setIngredientSearch] = useState('');
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [labelRecipeId, setLabelRecipeId] = useState<string | null>(null);
+  const [nutritionMode, setNutritionMode] = useNutritionMode();
 
   const { data: recipes } = useQuery({
     queryKey: ['recipes'],
@@ -52,32 +39,28 @@ export function RecipesPage() {
     enabled: tab === 'suggestions',
   });
 
+  const detailId = editingRecipeId ?? labelRecipeId ?? selectedRecipeId;
   const { data: recipeDetail } = useQuery({
-    queryKey: ['recipes', selectedRecipeId],
-    queryFn: () => api.get<RecipeDetailResponse>(`/recipes/${selectedRecipeId}`).then((r) => r.data),
-    enabled: !!selectedRecipeId,
-  });
-
-  const { data: productResults } = useQuery({
-    queryKey: ['products', 'search', ingredientSearch],
-    queryFn: () =>
-      api.get<{ items: ProductResponse[] }>('/products', { params: { query: ingredientSearch } }).then((r) => r.data.items),
-    enabled: ingredientSearch.length > 1,
+    queryKey: ['recipes', detailId],
+    queryFn: () => api.get<RecipeDetailResponse>(`/recipes/${detailId}`).then((r) => r.data),
+    enabled: !!detailId,
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: {
-      name: string;
-      description?: string;
-      servings: number;
-      prepTime?: number;
-      cookTime?: number;
-      ingredients: { productId: string; quantity: number; unit: string; notes?: string }[];
-    }) => api.post('/recipes', data),
+    mutationFn: (data: RecipeFormSubmitPayload) => api.post('/recipes', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       setShowCreate(false);
-      resetForm();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: RecipeFormSubmitPayload }) =>
+      api.patch(`/recipes/${id}`, data),
+    onSuccess: (_res, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['recipes'] });
+      queryClient.invalidateQueries({ queryKey: ['recipes', vars.id] });
+      setEditingRecipeId(null);
     },
   });
 
@@ -88,48 +71,6 @@ export function RecipesPage() {
       setSelectedRecipeId(null);
     },
   });
-
-  function resetForm() {
-    setRecipeName('');
-    setRecipeDesc('');
-    setRecipeServings('4');
-    setRecipePrepTime('');
-    setRecipeCookTime('');
-    setIngredients([]);
-  }
-
-  function addIngredient(product: ProductResponse) {
-    setIngredients([...ingredients, {
-      productId: product.id,
-      productName: product.name,
-      quantity: '100',
-      // Default to the product's nutrition base unit so the conversion is a no-op.
-      unit: product.nutritionBaseUnit || 'g',
-      notes: '',
-    }]);
-    setIngredientSearch('');
-  }
-
-  function removeIngredient(index: number) {
-    setIngredients(ingredients.filter((_, i) => i !== index));
-  }
-
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    createMutation.mutate({
-      name: recipeName,
-      description: recipeDesc || undefined,
-      servings: parseInt(recipeServings),
-      prepTime: recipePrepTime ? parseInt(recipePrepTime) : undefined,
-      cookTime: recipeCookTime ? parseInt(recipeCookTime) : undefined,
-      ingredients: ingredients.map((ing) => ({
-        productId: ing.productId,
-        quantity: parseFloat(ing.quantity),
-        unit: ing.unit,
-        notes: ing.notes || undefined,
-      })),
-    });
-  }
 
   function renderNutrition(nf: NutritionalFacts, label: string) {
     return (
@@ -143,7 +84,10 @@ export function RecipesPage() {
             { label: 'Fat', value: nf.fat, unit: 'g' },
           ].map(({ label, value, unit }) => (
             <div key={label} className="text-center p-2 bg-muted rounded">
-              <div className="font-medium">{value ?? '-'}{value !== undefined ? unit : ''}</div>
+              <div className="font-medium">
+                {value ?? '-'}
+                {value !== undefined ? unit : ''}
+              </div>
               <div className="text-muted-foreground">{label}</div>
             </div>
           ))}
@@ -159,26 +103,66 @@ export function RecipesPage() {
         <Button onClick={() => setShowCreate(true)}>New Recipe</Button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2">
-        <Button size="sm" variant={tab === 'all' ? 'default' : 'outline'} onClick={() => setTab('all')}>
-          All Recipes
-        </Button>
-        <Button size="sm" variant={tab === 'suggestions' ? 'default' : 'outline'} onClick={() => setTab('suggestions')}>
-          Suggestions
-        </Button>
+      {/* Tabs + nutrition mode toggle */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <Button size="sm" variant={tab === 'all' ? 'default' : 'outline'} onClick={() => setTab('all')}>
+            All Recipes
+          </Button>
+          <Button size="sm" variant={tab === 'suggestions' ? 'default' : 'outline'} onClick={() => setTab('suggestions')}>
+            Suggestions
+          </Button>
+        </div>
+        <div className="flex items-center gap-1 text-xs">
+          <span className="text-muted-foreground mr-1">Show nutrition</span>
+          <Button
+            size="sm"
+            variant={nutritionMode === 'per100g' ? 'default' : 'outline'}
+            onClick={() => setNutritionMode('per100g')}
+          >
+            Per 100 g
+          </Button>
+          <Button
+            size="sm"
+            variant={nutritionMode === 'perServing' ? 'default' : 'outline'}
+            onClick={() => setNutritionMode('perServing')}
+          >
+            Per serving
+          </Button>
+        </div>
       </div>
 
       {/* Recipes List */}
       {tab === 'all' && (
         <div className="grid gap-4 md:grid-cols-2">
           {recipes?.map((recipe) => (
-            <Card key={recipe.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedRecipeId(recipe.id)}>
+            <Card
+              key={recipe.id}
+              className="cursor-pointer hover:border-primary/50 transition-colors"
+              onClick={() => setSelectedRecipeId(recipe.id)}
+            >
               <CardContent className="p-4">
-                <h3 className="font-medium">{recipe.name}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-medium">{recipe.name}</h3>
+                  {nutritionMode === 'per100g'
+                    ? recipe.caloriesPer100g != null && (
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">
+                          {recipe.caloriesPer100g} kcal/100g
+                        </Badge>
+                      )
+                    : recipe.caloriesPerServing != null && (
+                        <Badge variant="outline" className="text-xs whitespace-nowrap">
+                          {recipe.caloriesPerServing} kcal/{recipe.servingUnit ?? 'serving'}
+                        </Badge>
+                      )}
+                </div>
                 {recipe.description && <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{recipe.description}</p>}
                 <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
-                  <span>{recipe.servings} servings</span>
+                  <span>
+                    {recipe.servings} {recipe.servingUnit ?? 'serving'}
+                    {recipe.servings === 1 ? '' : 's'}
+                    {recipe.totalWeightGrams && ` · ${recipe.totalWeightGrams}g`}
+                  </span>
                   {recipe.prepTime && <span>Prep: {recipe.prepTime}min</span>}
                   {recipe.cookTime && <span>Cook: {recipe.cookTime}min</span>}
                 </div>
@@ -195,7 +179,11 @@ export function RecipesPage() {
       {tab === 'suggestions' && (
         <div className="grid gap-4 md:grid-cols-2">
           {suggestions?.map((recipe) => (
-            <Card key={recipe.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedRecipeId(recipe.id)}>
+            <Card
+              key={recipe.id}
+              className="cursor-pointer hover:border-primary/50 transition-colors"
+              onClick={() => setSelectedRecipeId(recipe.id)}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-medium">{recipe.name}</h3>
@@ -221,7 +209,11 @@ export function RecipesPage() {
       )}
 
       {/* Recipe Detail Dialog */}
-      <Dialog open={!!selectedRecipeId && !!recipeDetail} onClose={() => setSelectedRecipeId(null)} className="max-w-2xl">
+      <Dialog
+        open={!!selectedRecipeId && !editingRecipeId && !labelRecipeId && !!recipeDetail}
+        onClose={() => setSelectedRecipeId(null)}
+        className="max-w-2xl"
+      >
         {recipeDetail && (
           <>
             <DialogHeader>
@@ -230,10 +222,28 @@ export function RecipesPage() {
             <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               {recipeDetail.description && <p className="text-sm text-muted-foreground">{recipeDetail.description}</p>}
 
-              <div className="flex gap-4 text-sm">
-                <span>{recipeDetail.servings} servings</span>
-                {recipeDetail.prepTime && <span>Prep: {recipeDetail.prepTime} min</span>}
-                {recipeDetail.cookTime && <span>Cook: {recipeDetail.cookTime} min</span>}
+              <div className="text-sm">
+                <div className="font-medium">
+                  Makes {recipeDetail.servings} {recipeDetail.servingUnit ?? 'serving'}
+                  {recipeDetail.servings === 1 ? '' : 's'}
+                  {recipeDetail.servingWeightGrams != null && (
+                    <>
+                      {' '}× {recipeDetail.servingWeightGrams} g
+                      {recipeDetail.totalWeightGrams != null && (
+                        <span className="text-muted-foreground">
+                          {' '}= {recipeDetail.totalWeightGrams} g total
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+                {(recipeDetail.prepTime || recipeDetail.cookTime) && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {recipeDetail.prepTime && <span>Prep: {recipeDetail.prepTime} min</span>}
+                    {recipeDetail.prepTime && recipeDetail.cookTime && <span> · </span>}
+                    {recipeDetail.cookTime && <span>Cook: {recipeDetail.cookTime} min</span>}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -248,11 +258,50 @@ export function RecipesPage() {
                 </div>
               </div>
 
-              {renderNutrition(recipeDetail.totalNutrition, 'Total Nutrition')}
-              {renderNutrition(recipeDetail.perServingNutrition, 'Per Serving')}
+              {renderNutrition(recipeDetail.totalNutrition, 'Total nutrition')}
+              {nutritionMode === 'per100g' && recipeDetail.per100gNutrition
+                ? renderNutrition(recipeDetail.per100gNutrition, 'Per 100 g')
+                : renderNutrition(
+                    recipeDetail.perServingNutrition,
+                    `Per ${recipeDetail.servingUnit ?? 'serving'}${recipeDetail.servingWeightGrams != null ? ` (${recipeDetail.servingWeightGrams} g)` : ''}`,
+                  )}
+              {nutritionMode === 'per100g' && !recipeDetail.per100gNutrition && (
+                <p className="text-xs text-muted-foreground">
+                  Set the recipe yield weight to see per-100 g values.
+                </p>
+              )}
             </div>
             <DialogFooter>
-              <Button variant="destructive" size="sm" onClick={() => deleteMutation.mutate(recipeDetail.id)}>Delete</Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  if (confirm(`Delete recipe "${recipeDetail.name}"?`)) {
+                    deleteMutation.mutate(recipeDetail.id);
+                  }
+                }}
+              >
+                Delete
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLabelRecipeId(recipeDetail.id);
+                  setSelectedRecipeId(null);
+                }}
+              >
+                Nutrition label
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditingRecipeId(recipeDetail.id);
+                  setSelectedRecipeId(null);
+                }}
+              >
+                Edit
+              </Button>
               <Button variant="outline" onClick={() => setSelectedRecipeId(null)}>Close</Button>
             </DialogFooter>
           </>
@@ -262,91 +311,53 @@ export function RecipesPage() {
       {/* Create Recipe Dialog */}
       <Dialog open={showCreate} onClose={() => setShowCreate(false)} className="max-w-2xl">
         <DialogHeader><DialogTitle>New Recipe</DialogTitle></DialogHeader>
-        <form onSubmit={handleCreate}>
-          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Name</label>
-              <Input value={recipeName} onChange={(e) => setRecipeName(e.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
-              <Input value={recipeDesc} onChange={(e) => setRecipeDesc(e.target.value)} />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Servings</label>
-                <Input type="number" value={recipeServings} onChange={(e) => setRecipeServings(e.target.value)} required />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Prep (min)</label>
-                <Input type="number" value={recipePrepTime} onChange={(e) => setRecipePrepTime(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Cook (min)</label>
-                <Input type="number" value={recipeCookTime} onChange={(e) => setRecipeCookTime(e.target.value)} />
-              </div>
-            </div>
+        <RecipeForm
+          submitLabel={createMutation.isPending ? 'Creating...' : 'Create'}
+          submitting={createMutation.isPending}
+          onCancel={() => setShowCreate(false)}
+          onSubmit={(data) => createMutation.mutate(data)}
+        />
+      </Dialog>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Ingredients</label>
-              <Input
-                value={ingredientSearch}
-                onChange={(e) => setIngredientSearch(e.target.value)}
-                placeholder="Search products to add..."
-              />
-              {productResults && productResults.length > 0 && ingredientSearch && (
-                <div className="border border-border rounded-md max-h-32 overflow-y-auto">
-                  {productResults.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
-                      onClick={() => addIngredient(p)}
-                    >
-                      {p.name} {p.brand && `(${p.brand})`}
-                    </button>
-                  ))}
-                </div>
-              )}
+      {/* Edit Recipe Dialog */}
+      <Dialog
+        open={!!editingRecipeId && !!recipeDetail}
+        onClose={() => setEditingRecipeId(null)}
+        className="max-w-2xl"
+      >
+        {recipeDetail && editingRecipeId === recipeDetail.id && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Edit Recipe</DialogTitle>
+            </DialogHeader>
+            <RecipeForm
+              key={`edit-${recipeDetail.id}`}
+              initialValues={recipeToFormValues(recipeDetail)}
+              submitLabel={updateMutation.isPending ? 'Saving...' : 'Save'}
+              submitting={updateMutation.isPending}
+              onCancel={() => setEditingRecipeId(null)}
+              onSubmit={(data) => updateMutation.mutate({ id: recipeDetail.id, data })}
+            />
+          </>
+        )}
+      </Dialog>
 
-              <div className="space-y-2">
-                {ingredients.map((ing, i) => (
-                  <div key={i} className="flex items-center gap-2 p-2 bg-muted rounded">
-                    <span className="text-sm flex-1">{ing.productName}</span>
-                    <Input
-                      className="w-20"
-                      type="number"
-                      value={ing.quantity}
-                      onChange={(e) => {
-                        const updated = [...ingredients];
-                        updated[i].quantity = e.target.value;
-                        setIngredients(updated);
-                      }}
-                    />
-                    <Select
-                      className="w-24"
-                      value={ing.unit}
-                      onChange={(e) => {
-                        const updated = [...ingredients];
-                        updated[i].unit = e.target.value;
-                        setIngredients(updated);
-                      }}
-                    >
-                      {ALL_UNITS.map((u) => (
-                        <option key={u.code} value={u.code}>{u.code}</option>
-                      ))}
-                    </Select>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => removeIngredient(i)}>X</Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" type="button" onClick={() => { setShowCreate(false); resetForm(); }}>Cancel</Button>
-            <Button type="submit" disabled={createMutation.isPending || ingredients.length === 0}>Create</Button>
-          </DialogFooter>
-        </form>
+      {/* Nutrition Label Dialog */}
+      <Dialog
+        open={!!labelRecipeId && !!recipeDetail}
+        onClose={() => setLabelRecipeId(null)}
+      >
+        {recipeDetail && labelRecipeId === recipeDetail.id && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{recipeDetail.name} — Nutrition label</DialogTitle>
+            </DialogHeader>
+            <NutritionLabel recipe={recipeDetail} mode={nutritionMode} />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLabelRecipeId(null)}>Close</Button>
+            </DialogFooter>
+          </>
+        )}
       </Dialog>
     </div>
   );

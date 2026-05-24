@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Link2, Link2Off, Lock, Unlock } from 'lucide-react';
+import { ChevronLeft, Link2, Link2Off, Lock, Trash2, Unlock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,10 @@ import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import type {
+  AddReceiptItemInput,
   CategoryResponse,
   PaymentMethodResponse,
+  ProductResponse,
   ReceiptAdjustmentResponse,
   ReceiptItemResponse,
   ReceiptResponse,
@@ -245,6 +247,22 @@ export function ReceiptDetailPage() {
   const deleteAdjustment = useMutation({
     mutationFn: async (adjId: string) => {
       const { data } = await api.delete<ReceiptResponse>(`/receipts/adjustments/${adjId}`);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const addItem = useMutation({
+    mutationFn: async (input: AddReceiptItemInput) => {
+      const { data } = await api.post<ReceiptResponse>(`/receipts/${id}/items`, input);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  const deleteItem = useMutation({
+    mutationFn: async (itemId: string) => {
+      const { data } = await api.delete<ReceiptResponse>(`/receipts/items/${itemId}`);
       return data;
     },
     onSuccess: onReceiptUpdate,
@@ -526,7 +544,7 @@ export function ReceiptDetailPage() {
                 <th className="px-4 py-2 text-right">Qty</th>
                 <th className="px-4 py-2 text-right">Pre-tax</th>
                 <th className="px-4 py-2 text-right">All-in</th>
-                <th className="px-4 py-2 text-center w-8" />
+                <th className="px-4 py-2 text-center w-16" />
               </tr>
             </thead>
             <tbody>
@@ -555,6 +573,7 @@ export function ReceiptDetailPage() {
                         onPatch={(data) => patchItem.mutate({ itemId: group.items[0].id, data })}
                         onMatch={() => setPickerItem(group.items[0])}
                         onUnmatch={() => matchProduct.mutate({ itemId: group.items[0].id, productId: null })}
+                        onDelete={() => deleteItem.mutate(group.items[0].id)}
                       />
                     ) : (
                       <GroupRow
@@ -600,6 +619,7 @@ export function ReceiptDetailPage() {
                       financeCatPending={setFinanceCategory.isPending && setFinanceCategory.variables?.itemId === item.id}
                       fieldPending={patchItem.isPending && patchItem.variables?.itemId === item.id}
                       matchPending={matchProduct.isPending && matchProduct.variables?.itemId === item.id}
+                      onDelete={() => deleteItem.mutate(item.id)}
                       onChangeCategory={(taxCategoryId) =>
                         setCategory.mutate({ itemId: item.id, taxCategoryId })
                       }
@@ -638,6 +658,18 @@ export function ReceiptDetailPage() {
           </table>
         </CardContent>
       </Card>
+
+      {!locked && (
+        <AddItemCard
+          currencyCode={receipt.currencyCode}
+          storageSpaces={storageSpacesData ?? []}
+          financeCategories={flatCategories}
+          taxCategories={taxCategories ?? []}
+          defaultStorageSpaceId={receipt.defaultStorageSpaceId}
+          onAdd={(input) => addItem.mutate(input)}
+          pending={addItem.isPending}
+        />
+      )}
 
       <AdjustmentsCard
         adjustments={receipt.adjustments}
@@ -724,6 +756,7 @@ interface ItemRowProps {
   onPatch: (data: UpdateReceiptItemInput) => void;
   onMatch: () => void;
   onUnmatch: () => void;
+  onDelete: () => void;
 }
 
 function ItemRow({
@@ -743,6 +776,7 @@ function ItemRow({
   onPatch,
   onMatch,
   onUnmatch,
+  onDelete,
 }: ItemRowProps) {
   const [catValue, setCatValue] = useState(item.taxCategoryId ?? '');
   if (catValue !== (item.taxCategoryId ?? '') && !catPending) {
@@ -918,26 +952,42 @@ function ItemRow({
         )}
       </td>
       <td className="px-2 py-2 text-center">
-        {locked ? null : item.productId ? (
-          <button
-            type="button"
-            onClick={onUnmatch}
-            disabled={matchPending}
-            title="Unlink product"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Link2Off className="h-4 w-4" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onMatch}
-            disabled={matchPending}
-            title="Match to a product"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Link2 className="h-4 w-4" />
-          </button>
+        {locked ? null : (
+          <div className="flex items-center justify-center gap-2">
+            {item.productId ? (
+              <button
+                type="button"
+                onClick={onUnmatch}
+                disabled={matchPending}
+                title="Unlink product"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Link2Off className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onMatch}
+                disabled={matchPending}
+                title="Match to a product"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Link2 className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm(`Remove "${item.productName ?? item.rawName}" from this receipt?`)) {
+                  onDelete();
+                }
+              }}
+              title="Remove line"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         )}
       </td>
     </tr>
@@ -1401,5 +1451,207 @@ function BackLink() {
       <ChevronLeft className="mr-1 h-4 w-4" />
       Back to receipts
     </Link>
+  );
+}
+
+interface AddItemCardProps {
+  currencyCode: string;
+  storageSpaces: StorageSpaceResponse[];
+  financeCategories: CategoryResponse[];
+  taxCategories: TaxCategoryResponse[];
+  defaultStorageSpaceId: string | null;
+  onAdd: (input: AddReceiptItemInput) => void;
+  pending: boolean;
+}
+
+function AddItemCard({
+  currencyCode,
+  storageSpaces,
+  financeCategories,
+  taxCategories,
+  defaultStorageSpaceId,
+  onAdd,
+  pending,
+}: AddItemCardProps) {
+  const [search, setSearch] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<ProductResponse | null>(null);
+  const [quantity, setQuantity] = useState('1');
+  const [unitPrice, setUnitPrice] = useState('');
+  const [lineTotal, setLineTotal] = useState('');
+  const [taxCategoryId, setTaxCategoryId] = useState('');
+  const [financeCategoryId, setFinanceCategoryId] = useState('');
+  const [storageSpaceId, setStorageSpaceId] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+
+  const { data: productResults } = useQuery({
+    queryKey: ['products', 'search', search],
+    queryFn: () =>
+      api
+        .get<{ items: ProductResponse[] }>('/products', { params: { query: search } })
+        .then((r) => r.data.items),
+    enabled: search.length > 1 && !selectedProduct,
+  });
+
+  function pickProduct(p: ProductResponse) {
+    setSelectedProduct(p);
+    setSearch(p.name);
+  }
+
+  function reset() {
+    setSearch('');
+    setSelectedProduct(null);
+    setQuantity('1');
+    setUnitPrice('');
+    setLineTotal('');
+    setTaxCategoryId('');
+    setFinanceCategoryId('');
+    setStorageSpaceId('');
+    setExpiryDate('');
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedProduct) return;
+    const qty = parseFloat(quantity) || 1;
+    const up = unitPrice ? parseFloat(unitPrice) : null;
+    let lt = lineTotal ? parseFloat(lineTotal) : null;
+    if (lt == null && up != null) lt = up * qty;
+    if (lt == null) lt = 0;
+
+    onAdd({
+      productId: selectedProduct.id,
+      quantity: qty,
+      unitPrice: up,
+      lineTotal: lt,
+      taxCategoryId: taxCategoryId || null,
+      financeCategoryId: financeCategoryId || null,
+      storageSpaceId: storageSpaceId || null,
+      expiryDate: expiryDate ? new Date(expiryDate + 'T12:00:00Z').toISOString() : null,
+    });
+    reset();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Add an item</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Product</label>
+            <Input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                if (selectedProduct && e.target.value !== selectedProduct.name) {
+                  setSelectedProduct(null);
+                }
+              }}
+              placeholder="Search products by name or brand..."
+            />
+            {!selectedProduct && productResults && productResults.length > 0 && search.length > 1 && (
+              <div className="border border-border rounded-md max-h-40 overflow-y-auto">
+                {productResults.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                    onClick={() => pickProduct(p)}
+                  >
+                    {p.name} {p.brand && <span className="text-muted-foreground">({p.brand})</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Quantity</label>
+              <Input
+                type="number"
+                step="0.01"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Unit price</label>
+              <Input
+                type="number"
+                step="0.01"
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                placeholder={`(${currencyCode})`}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Line total</label>
+              <Input
+                type="number"
+                step="0.01"
+                value={lineTotal}
+                onChange={(e) => setLineTotal(e.target.value)}
+                placeholder="auto from qty × price"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Expires</label>
+              <Input
+                type="date"
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Storage</label>
+              <Select
+                value={storageSpaceId}
+                onChange={(e) => setStorageSpaceId(e.target.value)}
+              >
+                <option value="">
+                  {defaultStorageSpaceId ? '— Use receipt default —' : '— None —'}
+                </option>
+                {storageSpaces.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Tax category</label>
+              <Select value={taxCategoryId} onChange={(e) => setTaxCategoryId(e.target.value)}>
+                <option value="">— Unassigned —</option>
+                {taxCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Expense category</label>
+              <Select
+                value={financeCategoryId}
+                onChange={(e) => setFinanceCategoryId(e.target.value)}
+              >
+                <option value="">— Use receipt default —</option>
+                {financeCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button type="submit" size="sm" disabled={!selectedProduct || pending}>
+              {pending ? 'Adding...' : 'Add item'}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

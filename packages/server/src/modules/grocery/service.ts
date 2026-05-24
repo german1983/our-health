@@ -1,16 +1,29 @@
 import { and, eq, ilike, or, asc, desc, sql } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
-import { brands, products, stores, priceRecords } from '../../db/schema.js';
+import {
+  brands,
+  products,
+  stores,
+  priceRecords,
+  storageItems,
+  storageSpaces,
+  receiptItems,
+  receipts,
+} from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { fetchProductByBarcode } from '../../integrations/open-food-facts.js';
 import type {
   CreateProductInput,
+  UpdateProductInput,
   CreateStoreInput,
   UpdateStoreInput,
   CreatePriceRecordInput,
   BrandResponse,
   NutritionalFacts,
   ProductResponse,
+  ProductDetailResponse,
+  ProductStorageEntry,
+  ProductPurchaseEntry,
   StoreResponse,
   PriceRecordResponse,
 } from '@personal-budget/shared';
@@ -76,6 +89,108 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
     limit,
     totalPages: Math.ceil(total / limit),
   };
+}
+
+export async function getProductDetail(id: string, householdId: string): Promise<ProductDetailResponse> {
+  const product = await db.query.products.findFirst({ where: eq(products.id, id) });
+  if (!product) throw new NotFoundError('Product');
+
+  const storageRows = await db
+    .select({
+      id: storageItems.id,
+      storageSpaceId: storageItems.storageSpaceId,
+      quantity: storageItems.quantity,
+      unit: storageItems.unit,
+      expiryDate: storageItems.expiryDate,
+      addedAt: storageItems.addedAt,
+      spaceName: storageSpaces.name,
+      spaceType: storageSpaces.spaceType,
+    })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .where(and(eq(storageItems.productId, id), eq(storageSpaces.householdId, householdId)))
+    .orderBy(desc(storageItems.addedAt));
+
+  const storageEntries: ProductStorageEntry[] = storageRows.map((r) => ({
+    id: r.id,
+    storageSpaceId: r.storageSpaceId,
+    spaceName: r.spaceName,
+    spaceType: r.spaceType,
+    quantity: r.quantity,
+    unit: r.unit,
+    expiryDate: r.expiryDate?.toISOString() ?? null,
+    addedAt: r.addedAt.toISOString(),
+  }));
+
+  const purchaseRows = await db
+    .select({
+      receiptItemId: receiptItems.id,
+      receiptId: receiptItems.receiptId,
+      rawName: receiptItems.rawName,
+      quantity: receiptItems.quantity,
+      unitPrice: receiptItems.unitPrice,
+      lineTotal: receiptItems.lineTotal,
+      purchasedAt: receipts.purchasedAt,
+      storeId: receipts.storeId,
+      storeName: stores.name,
+      currencyCode: receipts.currencyCode,
+    })
+    .from(receiptItems)
+    .innerJoin(receipts, eq(receipts.id, receiptItems.receiptId))
+    .leftJoin(stores, eq(stores.id, receipts.storeId))
+    .where(and(eq(receiptItems.productId, id), eq(receipts.householdId, householdId)))
+    .orderBy(desc(receipts.purchasedAt));
+
+  const purchaseHistory: ProductPurchaseEntry[] = purchaseRows.map((r) => ({
+    receiptItemId: r.receiptItemId,
+    receiptId: r.receiptId,
+    purchasedAt: r.purchasedAt?.toISOString() ?? null,
+    storeId: r.storeId,
+    storeName: r.storeName,
+    rawName: r.rawName,
+    quantity: r.quantity,
+    unitPrice: r.unitPrice,
+    lineTotal: r.lineTotal,
+    currencyCode: r.currencyCode,
+  }));
+
+  return {
+    ...formatProduct(product),
+    storageEntries,
+    purchaseHistory,
+  };
+}
+
+export async function updateProduct(id: string, input: UpdateProductInput): Promise<ProductResponse> {
+  const existing = await db.query.products.findFirst({ where: eq(products.id, id) });
+  if (!existing) throw new NotFoundError('Product');
+
+  const updates: Partial<typeof products.$inferInsert> = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.barcode !== undefined) updates.barcode = input.barcode;
+  if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
+  if (input.nutritionalFacts !== undefined) updates.nutritionalFacts = input.nutritionalFacts;
+  if (input.nutritionBaseAmount !== undefined) updates.nutritionBaseAmount = input.nutritionBaseAmount;
+  if (input.nutritionBaseUnit !== undefined) updates.nutritionBaseUnit = input.nutritionBaseUnit;
+
+  if (input.brand !== undefined) {
+    updates.brand = input.brand;
+    if (input.brand) {
+      const [brand] = await db
+        .insert(brands)
+        .values({ name: input.brand })
+        .onConflictDoUpdate({ target: brands.name, set: { name: input.brand } })
+        .returning();
+      updates.brandId = brand.id;
+    } else {
+      updates.brandId = null;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) return formatProduct(existing);
+
+  const [updated] = await db.update(products).set(updates).where(eq(products.id, id)).returning();
+  return formatProduct(updated);
 }
 
 export async function createProduct(input: CreateProductInput): Promise<ProductResponse> {

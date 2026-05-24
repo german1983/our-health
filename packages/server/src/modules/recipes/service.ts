@@ -44,10 +44,22 @@ type RecipeWithRelations = {
 export async function getRecipes(householdId: string): Promise<RecipeResponse[]> {
   const result = await db.query.recipes.findMany({
     where: eq(recipes.householdId, householdId),
-    with: { createdBy: true },
+    with: {
+      createdBy: true,
+      ingredients: { with: { product: true } },
+    },
     orderBy: desc(recipes.createdAt),
   });
-  return result.map(formatRecipe);
+  return result.map((r) => {
+    const ings = (r.ingredients ?? []).map((ing) => ({
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutritionalFacts: ing.product.nutritionalFacts,
+      nutritionBaseAmount: ing.product.nutritionBaseAmount,
+      nutritionBaseUnit: ing.product.nutritionBaseUnit,
+    }));
+    return formatRecipe(r, { totalNutrition: calculateTotalNutrition(ings) });
+  });
 }
 
 export async function getRecipe(id: string, householdId: string): Promise<RecipeDetailResponse> {
@@ -75,12 +87,14 @@ export async function getRecipe(id: string, householdId: string): Promise<Recipe
 
   const totalNutrition = calculateTotalNutrition(ingredients);
   const perServingNutrition = divideNutrition(totalNutrition, recipe.servings);
+  const base = formatRecipe(recipe, { totalNutrition });
 
   return {
-    ...formatRecipe(recipe),
+    ...base,
     ingredients,
     totalNutrition,
     perServingNutrition,
+    per100gNutrition: per100gNutrition(totalNutrition, base.totalWeightGrams),
   };
 }
 
@@ -198,8 +212,16 @@ export async function getSuggestions(householdId: string): Promise<RecipeSuggest
 
     const matchScore = totalIngredients > 0 ? available.length / totalIngredients : 0;
 
+    const nutritionInputs = ings.map((ing) => ({
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutritionalFacts: ing.product.nutritionalFacts,
+      nutritionBaseAmount: ing.product.nutritionBaseAmount,
+      nutritionBaseUnit: ing.product.nutritionBaseUnit,
+    }));
+
     return {
-      ...formatRecipe(recipe),
+      ...formatRecipe(recipe, { totalNutrition: calculateTotalNutrition(nutritionInputs) }),
       availableIngredients: available.length,
       totalIngredients,
       missingIngredients: missing,
@@ -225,11 +247,18 @@ function calculateTotalNutrition(
     calories: 0,
     fat: 0,
     saturatedFat: 0,
+    transFat: 0,
     carbs: 0,
     sugars: 0,
     fiber: 0,
     protein: 0,
-    salt: 0,
+    sodium: 0,
+    potassium: 0,
+    calcium: 0,
+    iron: 0,
+    vitaminA: 0,
+    vitaminD: 0,
+    cholesterol: 0,
   };
 
   for (const ing of ingredients) {
@@ -246,11 +275,18 @@ function calculateTotalNutrition(
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0) * factor;
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0) * factor;
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0) * factor;
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0) * factor;
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0) * factor;
     total.protein = (total.protein ?? 0) + (nf.protein ?? 0) * factor;
-    total.salt = (total.salt ?? 0) + (nf.salt ?? 0) * factor;
+    total.sodium = (total.sodium ?? 0) + (nf.sodium ?? 0) * factor;
+    total.potassium = (total.potassium ?? 0) + (nf.potassium ?? 0) * factor;
+    total.calcium = (total.calcium ?? 0) + (nf.calcium ?? 0) * factor;
+    total.iron = (total.iron ?? 0) + (nf.iron ?? 0) * factor;
+    total.vitaminA = (total.vitaminA ?? 0) + (nf.vitaminA ?? 0) * factor;
+    total.vitaminD = (total.vitaminD ?? 0) + (nf.vitaminD ?? 0) * factor;
+    total.cholesterol = (total.cholesterol ?? 0) + (nf.cholesterol ?? 0) * factor;
   }
 
   return roundNutrition(total);
@@ -262,11 +298,18 @@ function divideNutrition(total: NutritionalFacts, servings: number): Nutritional
     calories: (total.calories ?? 0) / servings,
     fat: (total.fat ?? 0) / servings,
     saturatedFat: (total.saturatedFat ?? 0) / servings,
+    transFat: (total.transFat ?? 0) / servings,
     carbs: (total.carbs ?? 0) / servings,
     sugars: (total.sugars ?? 0) / servings,
     fiber: (total.fiber ?? 0) / servings,
     protein: (total.protein ?? 0) / servings,
-    salt: (total.salt ?? 0) / servings,
+    sodium: (total.sodium ?? 0) / servings,
+    potassium: (total.potassium ?? 0) / servings,
+    calcium: (total.calcium ?? 0) / servings,
+    iron: (total.iron ?? 0) / servings,
+    vitaminA: (total.vitaminA ?? 0) / servings,
+    vitaminD: (total.vitaminD ?? 0) / servings,
+    cholesterol: (total.cholesterol ?? 0) / servings,
   });
 }
 
@@ -276,15 +319,38 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
     calories: round(nf.calories),
     fat: round(nf.fat),
     saturatedFat: round(nf.saturatedFat),
+    transFat: round(nf.transFat),
     carbs: round(nf.carbs),
     sugars: round(nf.sugars),
     fiber: round(nf.fiber),
     protein: round(nf.protein),
-    salt: round(nf.salt),
+    sodium: round(nf.sodium),
+    potassium: round(nf.potassium),
+    calcium: round(nf.calcium),
+    iron: round(nf.iron),
+    vitaminA: round(nf.vitaminA),
+    vitaminD: round(nf.vitaminD),
+    cholesterol: round(nf.cholesterol),
   };
 }
 
-function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
+function formatRecipe(
+  recipe: RecipeWithRelations,
+  extras?: { totalNutrition?: NutritionalFacts },
+): RecipeResponse {
+  const totalWeightGrams =
+    recipe.servingWeightGrams != null && recipe.servings > 0
+      ? recipe.servings * recipe.servingWeightGrams
+      : null;
+  const totalCalories = extras?.totalNutrition?.calories ?? null;
+  const caloriesPer100g =
+    totalWeightGrams && totalWeightGrams > 0 && totalCalories != null
+      ? Math.round((totalCalories * 100) / totalWeightGrams * 10) / 10
+      : null;
+  const caloriesPerServing =
+    recipe.servings > 0 && totalCalories != null
+      ? Math.round((totalCalories / recipe.servings) * 10) / 10
+      : null;
   return {
     id: recipe.id,
     name: recipe.name,
@@ -292,6 +358,9 @@ function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
     servings: recipe.servings,
     servingUnit: recipe.servingUnit,
     servingWeightGrams: recipe.servingWeightGrams,
+    totalWeightGrams,
+    caloriesPer100g,
+    caloriesPerServing,
     prepTime: recipe.prepTime,
     cookTime: recipe.cookTime,
     imageUrl: recipe.imageUrl,
@@ -299,4 +368,12 @@ function formatRecipe(recipe: RecipeWithRelations): RecipeResponse {
     createdBy: recipe.createdBy.name,
     createdAt: recipe.createdAt.toISOString(),
   };
+}
+
+function per100gNutrition(
+  total: NutritionalFacts,
+  totalWeightGrams: number | null,
+): NutritionalFacts | null {
+  if (!totalWeightGrams || totalWeightGrams <= 0) return null;
+  return divideNutrition(total, totalWeightGrams / 100);
 }
