@@ -6,15 +6,48 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
+import { UNITS } from '@personal-budget/shared';
 import type {
+  BrandResponse,
   DailyLogResponse,
-  MealSlot,
   IntakeEntryResponse,
+  MealSlot,
+  ProductDetailResponse,
   ProductResponse,
   RecipeResponse,
   ServingUnitResponse,
-  BrandResponse,
 } from '@personal-budget/shared';
+
+/**
+ * Encoded value the unit `<select>` carries. The empty string means "use the
+ * product's nutrition base unit"; `phys:X` is a physical unit code from the
+ * units library; `custom:<id>` is a household-defined custom serving unit.
+ */
+type UnitChoice = '' | `phys:${string}` | `custom:${string}`;
+
+function decodeUnitChoice(value: string): { servingUnitId?: string; unit?: string } {
+  if (value.startsWith('custom:')) return { servingUnitId: value.slice('custom:'.length) };
+  if (value.startsWith('phys:')) return { unit: value.slice('phys:'.length) };
+  return {};
+}
+
+function encodeFromEntry(entry: IntakeEntryResponse): UnitChoice {
+  if (entry.servingUnitId) return `custom:${entry.servingUnitId}` as UnitChoice;
+  if (entry.unit) return `phys:${entry.unit}` as UnitChoice;
+  return '';
+}
+
+/**
+ * Standard units in the same family as `baseUnit`, excluding the base itself
+ * (the base appears as the default option). E.g., baseUnit='g' → mg, kg, oz, lb.
+ */
+function otherFamilyUnits(baseUnit: string): { code: string; name: string }[] {
+  const base = UNITS[baseUnit];
+  if (!base) return [];
+  return Object.values(UNITS)
+    .filter((u) => u.family === base.family && u.code !== baseUnit)
+    .map((u) => ({ code: u.code, name: u.name }));
+}
 
 const MEAL_SLOT_LABELS: Record<MealSlot, string> = {
   BREAKFAST: 'Breakfast',
@@ -61,7 +94,7 @@ export function IntakePage() {
   const [selectedRecipeId, setSelectedRecipeId] = useState('');
   const [selectedRecipeName, setSelectedRecipeName] = useState('');
   const [entryQuantity, setEntryQuantity] = useState('100');
-  const [entryServingUnitId, setEntryServingUnitId] = useState('');
+  const [entryUnitChoice, setEntryUnitChoice] = useState<UnitChoice>('');
   const [entryNotes, setEntryNotes] = useState('');
 
   // New product form (inline within add dialog)
@@ -93,7 +126,7 @@ export function IntakePage() {
   // Edit entry dialog
   const [editingEntry, setEditingEntry] = useState<IntakeEntryResponse | null>(null);
   const [editQuantity, setEditQuantity] = useState('');
-  const [editServingUnitId, setEditServingUnitId] = useState('');
+  const [editUnitChoice, setEditUnitChoice] = useState<UnitChoice>('');
   const [editMealSlot, setEditMealSlot] = useState<MealSlot>('BREAKFAST');
 
   // ==================== Queries ====================
@@ -127,12 +160,24 @@ export function IntakePage() {
     enabled: !!selectedProductId,
   });
 
+  // Pull the product's nutritionBaseUnit so we know which family of physical
+  // units to expose in the unit picker.
+  const { data: selectedProductDetail } = useQuery({
+    queryKey: ['products', 'detail', selectedProductId],
+    queryFn: () =>
+      api.get<ProductDetailResponse>(`/products/${selectedProductId}`).then((r) => r.data),
+    enabled: !!selectedProductId,
+  });
+  const selectedProductBaseUnit = selectedProductDetail?.nutritionBaseUnit ?? 'g';
+
   const { data: editServingUnits } = useQuery({
     queryKey: ['intake', 'serving-units', editingEntry?.productId],
     queryFn: () =>
       api.get<ServingUnitResponse[]>('/intake/serving-units', { params: { productId: editingEntry!.productId } }).then((r) => r.data),
     enabled: !!editingEntry?.productId,
   });
+  // editingEntry.calculatedUnit is the product's base unit when known.
+  const editingProductBaseUnit = editingEntry?.calculatedUnit ?? 'g';
 
   const { data: brandResults } = useQuery({
     queryKey: ['brands', brandSearch],
@@ -150,6 +195,7 @@ export function IntakePage() {
       recipeId?: string;
       quantity: number;
       servingUnitId?: string;
+      unit?: string;
       notes?: string;
     }) => api.post('/intake/entries', data),
     onSuccess: () => {
@@ -159,8 +205,16 @@ export function IntakePage() {
   });
 
   const updateEntryMutation = useMutation({
-    mutationFn: ({ id, ...data }: { id: string; mealSlot?: MealSlot; quantity?: number; servingUnitId?: string | null }) =>
-      api.patch(`/intake/entries/${id}`, data),
+    mutationFn: ({
+      id,
+      ...data
+    }: {
+      id: string;
+      mealSlot?: MealSlot;
+      quantity?: number;
+      servingUnitId?: string | null;
+      unit?: string | null;
+    }) => api.patch(`/intake/entries/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['intake', 'log', selectedDate] });
       setEditingEntry(null);
@@ -248,7 +302,7 @@ export function IntakePage() {
     setSelectedRecipeId('');
     setSelectedRecipeName('');
     setEntryQuantity('100');
-    setEntryServingUnitId('');
+    setEntryUnitChoice('');
     setEntryNotes('');
     setShowAddDialog(true);
   }
@@ -328,13 +382,15 @@ export function IntakePage() {
 
   function handleAddEntry(e: FormEvent) {
     e.preventDefault();
+    const { servingUnitId, unit } = decodeUnitChoice(entryUnitChoice);
     createEntryMutation.mutate({
       date: selectedDate,
       mealSlot: addMealSlot,
       productId: entryType === 'product' ? selectedProductId : undefined,
       recipeId: entryType === 'recipe' ? selectedRecipeId : undefined,
       quantity: parseFloat(entryQuantity),
-      servingUnitId: entryServingUnitId || undefined,
+      servingUnitId,
+      unit,
       notes: entryNotes || undefined,
     });
   }
@@ -351,18 +407,22 @@ export function IntakePage() {
   function openEditDialog(entry: IntakeEntryResponse) {
     setEditingEntry(entry);
     setEditQuantity(String(entry.quantity));
-    setEditServingUnitId(entry.servingUnitId ?? '');
+    setEditUnitChoice(encodeFromEntry(entry));
     setEditMealSlot(entry.mealSlot);
   }
 
   function handleEditEntry(e: FormEvent) {
     e.preventDefault();
     if (!editingEntry) return;
+    // Decode the choice into the right field — and explicitly null the other
+    // so a switch from custom to physical (or back) clears the previous one.
+    const { servingUnitId, unit } = decodeUnitChoice(editUnitChoice);
     updateEntryMutation.mutate({
       id: editingEntry.id,
       mealSlot: editMealSlot,
       quantity: parseFloat(editQuantity),
-      servingUnitId: editServingUnitId || null,
+      servingUnitId: servingUnitId ?? null,
+      unit: unit ?? null,
     });
   }
 
@@ -395,7 +455,7 @@ export function IntakePage() {
                 setSelectedRecipeId('');
                 setSelectedRecipeName('');
                 setEntryQuantity('100');
-                setEntryServingUnitId('');
+                setEntryUnitChoice('');
               }}
             >
               Product
@@ -410,7 +470,7 @@ export function IntakePage() {
                 setSelectedProductId('');
                 setSelectedProductName('');
                 setEntryQuantity('1');
-                setEntryServingUnitId('');
+                setEntryUnitChoice('');
               }}
             >
               Recipe
@@ -485,7 +545,7 @@ export function IntakePage() {
                     setSelectedRecipeId('');
                     setSelectedRecipeName('');
                     setSearchQuery('');
-                    setEntryServingUnitId('');
+                    setEntryUnitChoice('');
                   }}
                 >
                   Clear
@@ -514,16 +574,30 @@ export function IntakePage() {
                 <label className="text-sm font-medium">Unit</label>
                 <div className="flex gap-1">
                   <Select
-                    value={entryServingUnitId}
-                    onChange={(e) => setEntryServingUnitId(e.target.value)}
+                    value={entryUnitChoice}
+                    onChange={(e) => setEntryUnitChoice(e.target.value as UnitChoice)}
                     className="flex-1"
                   >
-                    <option value="">grams</option>
-                    {servingUnits?.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.baseUnitEquivalent})
+                    <optgroup label="Default & custom">
+                      <option value="">
+                        {selectedProductBaseUnit}
+                        {UNITS[selectedProductBaseUnit] ? ` (${UNITS[selectedProductBaseUnit].name})` : ''}
                       </option>
-                    ))}
+                      {servingUnits?.map((u) => (
+                        <option key={u.id} value={`custom:${u.id}`}>
+                          {u.name} ({u.baseUnitEquivalent} {selectedProductBaseUnit})
+                        </option>
+                      ))}
+                    </optgroup>
+                    {otherFamilyUnits(selectedProductBaseUnit).length > 0 && (
+                      <optgroup label="Other units">
+                        {otherFamilyUnits(selectedProductBaseUnit).map((u) => (
+                          <option key={u.code} value={`phys:${u.code}`}>
+                            {u.code} ({u.name})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </Select>
                   <Button
                     type="button"
@@ -950,11 +1024,30 @@ export function IntakePage() {
               {editingEntry?.productId && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Unit</label>
-                  <Select value={editServingUnitId} onChange={(e) => setEditServingUnitId(e.target.value)}>
-                    <option value="">grams</option>
-                    {editServingUnits?.map((u) => (
-                      <option key={u.id} value={u.id}>{u.name} ({u.baseUnitEquivalent})</option>
-                    ))}
+                  <Select
+                    value={editUnitChoice}
+                    onChange={(e) => setEditUnitChoice(e.target.value as UnitChoice)}
+                  >
+                    <optgroup label="Default & custom">
+                      <option value="">
+                        {editingProductBaseUnit}
+                        {UNITS[editingProductBaseUnit] ? ` (${UNITS[editingProductBaseUnit].name})` : ''}
+                      </option>
+                      {editServingUnits?.map((u) => (
+                        <option key={u.id} value={`custom:${u.id}`}>
+                          {u.name} ({u.baseUnitEquivalent} {editingProductBaseUnit})
+                        </option>
+                      ))}
+                    </optgroup>
+                    {otherFamilyUnits(editingProductBaseUnit).length > 0 && (
+                      <optgroup label="Other units">
+                        {otherFamilyUnits(editingProductBaseUnit).map((u) => (
+                          <option key={u.code} value={`phys:${u.code}`}>
+                            {u.code} ({u.name})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </Select>
                 </div>
               )}
