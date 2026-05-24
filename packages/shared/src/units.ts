@@ -30,7 +30,8 @@ export const UNITS: Record<string, UnitDefinition> = {
   dl: { code: 'dl', name: 'deciliters', family: 'VOLUME', toBaseFactor: 100 },
   L: { code: 'L', name: 'liters', family: 'VOLUME', toBaseFactor: 1000 },
   fl_oz: { code: 'fl_oz', name: 'fluid ounces', family: 'VOLUME', toBaseFactor: 29.5735 },
-  cup: { code: 'cup', name: 'cups', family: 'VOLUME', toBaseFactor: 236.588 },
+  cup: { code: 'cup', name: 'cups (metric, 250 ml)', family: 'VOLUME', toBaseFactor: 250 },
+  cup_us: { code: 'cup_us', name: 'cups (US, 236.588 ml)', family: 'VOLUME', toBaseFactor: 236.588 },
   tbsp: { code: 'tbsp', name: 'tablespoons', family: 'VOLUME', toBaseFactor: 14.7868 },
   tsp: { code: 'tsp', name: 'teaspoons', family: 'VOLUME', toBaseFactor: 4.92892 },
   // Count (base: unit)
