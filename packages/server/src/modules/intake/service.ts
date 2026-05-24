@@ -119,7 +119,7 @@ export async function createEntry(userId: string, input: CreateIntakeEntryInput)
     const unit = await db.query.productServingUnits.findFirst({
       where: eq(productServingUnits.id, input.servingUnitId),
     });
-    if (!unit || unit.userId !== userId) throw new NotFoundError('Serving unit');
+    if (!unit) throw new NotFoundError('Serving unit');
   }
 
   const [inserted] = await db
@@ -159,7 +159,7 @@ export async function updateEntry(
     const unit = await db.query.productServingUnits.findFirst({
       where: eq(productServingUnits.id, input.servingUnitId),
     });
-    if (!unit || unit.userId !== userId) throw new NotFoundError('Serving unit');
+    if (!unit) throw new NotFoundError('Serving unit');
   }
 
   // servingUnitId and unit are mutually exclusive — setting one clears the other.
@@ -198,10 +198,12 @@ export async function deleteEntry(entryId: string, userId: string): Promise<void
 }
 
 // ==================== Serving Units ====================
+// Custom unit conversions for a product (e.g., "1 slice = 21 g"). Shared
+// across the household — anyone in the household can read/write them.
 
-export async function getServingUnits(userId: string, productId: string): Promise<ServingUnitResponse[]> {
+export async function getServingUnits(productId: string): Promise<ServingUnitResponse[]> {
   const units = await db.query.productServingUnits.findMany({
-    where: and(eq(productServingUnits.userId, userId), eq(productServingUnits.productId, productId)),
+    where: eq(productServingUnits.productId, productId),
     orderBy: asc(productServingUnits.name),
   });
   return units.map((u) => ({
@@ -213,14 +215,12 @@ export async function getServingUnits(userId: string, productId: string): Promis
 }
 
 export async function createServingUnit(
-  userId: string,
   input: CreateServingUnitInput,
 ): Promise<ServingUnitResponse> {
   const [unit] = await db
     .insert(productServingUnits)
     .values({
       productId: input.productId,
-      userId,
       name: input.name,
       baseUnitEquivalent: input.baseUnitEquivalent,
     })
@@ -235,14 +235,12 @@ export async function createServingUnit(
 
 export async function updateServingUnit(
   id: string,
-  userId: string,
   input: UpdateServingUnitInput,
 ): Promise<ServingUnitResponse> {
   const existing = await db.query.productServingUnits.findFirst({
     where: eq(productServingUnits.id, id),
   });
   if (!existing) throw new NotFoundError('Serving unit');
-  if (existing.userId !== userId) throw new ForbiddenError();
 
   const [unit] = await db
     .update(productServingUnits)
@@ -257,12 +255,11 @@ export async function updateServingUnit(
   };
 }
 
-export async function deleteServingUnit(id: string, userId: string): Promise<void> {
+export async function deleteServingUnit(id: string): Promise<void> {
   const existing = await db.query.productServingUnits.findFirst({
     where: eq(productServingUnits.id, id),
   });
   if (!existing) throw new NotFoundError('Serving unit');
-  if (existing.userId !== userId) throw new ForbiddenError();
   await db.delete(productServingUnits).where(eq(productServingUnits.id, id));
 }
 
