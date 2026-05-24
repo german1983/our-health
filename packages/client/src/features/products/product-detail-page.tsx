@@ -10,6 +10,7 @@ import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { UNITS } from '@personal-budget/shared';
 import type {
+  CategoryResponse,
   CreateProductPresentationInput,
   ProductDetailResponse,
   ProductPresentationResponse,
@@ -50,6 +51,25 @@ export function ProductDetailPage() {
   const [brand, setBrand] = useState('');
   const [barcode, setBarcode] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+
+  const { data: categoryTree } = useQuery({
+    queryKey: ['finance-categories'],
+    queryFn: () => api.get<CategoryResponse[]>('/finance/categories').then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+  const flatExpenseCategories = (() => {
+    if (!categoryTree) return [] as { id: string; name: string }[];
+    const out: { id: string; name: string }[] = [];
+    function walk(nodes: CategoryResponse[], depth: number) {
+      for (const n of nodes) {
+        if (n.type === 'EXPENSE') out.push({ id: n.id, name: `${'— '.repeat(depth)}${n.name}` });
+        if (n.children) walk(n.children, depth + 1);
+      }
+    }
+    walk(categoryTree, 0);
+    return out;
+  })();
 
   // Nutrition form
   const [nutritionForm, setNutritionForm] = useState<NutritionFormState>(emptyNutritionForm);
@@ -62,6 +82,7 @@ export function ProductDetailPage() {
     setBrand(product.brand ?? '');
     setBarcode(product.barcode ?? '');
     setImageUrl(product.imageUrl ?? '');
+    setCategoryId(product.categoryId ?? '');
     setNutritionForm(nutritionToForm(product.nutritionalFacts));
     setBaseAmount(String(product.nutritionBaseAmount));
     setBaseUnit(product.nutritionBaseUnit);
@@ -122,6 +143,7 @@ export function ProductDetailPage() {
       brand: brand || null,
       barcode: barcode || null,
       imageUrl: imageUrl || null,
+      categoryId: categoryId || null,
     });
   }
 
@@ -187,6 +209,17 @@ export function ProductDetailPage() {
                   <label className="text-sm font-medium">Image URL</label>
                   <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
                 </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <label className="text-sm font-medium">Category</label>
+                  <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                    <option value="">— Uncategorized —</option>
+                    {flatExpenseCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
             </div>
             <div className="flex justify-end">
@@ -198,7 +231,9 @@ export function ProductDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Nutritional Facts */}
+      {/* Nutritional Facts — only rendered for products in categories that
+          track nutrition (e.g. Groceries). Cleaning supplies skip this. */}
+      {product.categoryHasNutritionalFacts && (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Nutritional Facts</CardTitle>
@@ -253,6 +288,7 @@ export function ProductDetailPage() {
           </form>
         </CardContent>
       </Card>
+      )}
 
       {/* Presentations / packaging */}
       <PresentationsCard

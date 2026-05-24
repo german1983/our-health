@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,10 @@ export function FinancePage() {
   const [catName, setCatName] = useState('');
   const [catType, setCatType] = useState<CategoryType>('EXPENSE');
   const [catParentId, setCatParentId] = useState('');
+  const [catHasNutrition, setCatHasNutrition] = useState(false);
+  // Whether the user has explicitly toggled the flag in this dialog session.
+  // Until they do, parent selection drives the value.
+  const [catNutritionTouched, setCatNutritionTouched] = useState(false);
 
   // Filters
   const [filterType, setFilterType] = useState<string>('');
@@ -101,14 +105,49 @@ export function FinancePage() {
   });
 
   const addCategoryMutation = useMutation({
-    mutationFn: (data: { name: string; type: CategoryType; parentId?: string }) =>
-      api.post('/finance/categories', data),
+    mutationFn: (data: {
+      name: string;
+      type: CategoryType;
+      parentId?: string;
+      hasNutritionalFacts?: boolean;
+    }) => api.post('/finance/categories', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       setShowAddCategory(false);
       setCatName('');
+      setCatParentId('');
+      setCatHasNutrition(false);
+      setCatNutritionTouched(false);
     },
   });
+
+  /** Walk the category tree to find a node by id (for parent-flag lookup). */
+  function findCategoryById(
+    tree: CategoryResponse[] | undefined,
+    id: string,
+  ): CategoryResponse | null {
+    if (!tree) return null;
+    for (const cat of tree) {
+      if (cat.id === id) return cat;
+      if (cat.children) {
+        const hit = findCategoryById(cat.children, id);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
+  // Auto-fill the flag from the chosen parent until the user overrides it.
+  useEffect(() => {
+    if (catNutritionTouched) return;
+    if (!catParentId) {
+      setCatHasNutrition(false);
+      return;
+    }
+    const parent = findCategoryById(categories, catParentId);
+    setCatHasNutrition(parent?.hasNutritionalFacts ?? false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catParentId, categories, catNutritionTouched]);
 
   function flattenCategories(cats: CategoryResponse[], depth = 0): { id: string; name: string; type: CategoryType; depth: number }[] {
     const result: { id: string; name: string; type: CategoryType; depth: number }[] = [];
@@ -353,6 +392,7 @@ export function FinancePage() {
             name: catName,
             type: catType,
             parentId: catParentId || undefined,
+            hasNutritionalFacts: catHasNutrition,
           });
         }}>
           <div className="space-y-4">
@@ -378,6 +418,25 @@ export function FinancePage() {
                   ))}
               </Select>
             </div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={catHasNutrition}
+                onChange={(e) => {
+                  setCatNutritionTouched(true);
+                  setCatHasNutrition(e.target.checked);
+                }}
+              />
+              <span>
+                <span className="font-medium">Products track nutritional facts</span>
+                <span className="block text-xs text-muted-foreground">
+                  Check this for food categories (Groceries, etc.) so the app collects and
+                  displays calorie/macro info on each product. Leave unchecked for non-food
+                  categories like cleaning supplies or rent. Defaults to the parent's value.
+                </span>
+              </span>
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => setShowAddCategory(false)}>Cancel</Button>

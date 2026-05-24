@@ -727,6 +727,7 @@ export function ReceiptDetailPage() {
         open={pickerItem !== null}
         initialQuery={pickerItem?.rawName ?? ''}
         initialBarcode={pickerItem?.rawCode ?? null}
+        initialCategoryId={pickerItem?.financeCategoryId ?? receipt?.defaultCategoryId ?? null}
         onClose={() => setPickerItem(null)}
         onSelect={(productId) => {
           if (pickerItem) {
@@ -1490,7 +1491,7 @@ function PresentationSelector({ productId, value, onChange }: PresentationSelect
     <Select
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value || null)}
-      className="h-7 text-xs"
+      className="h-7 text-xs min-w-[14rem] max-w-full"
     >
       <option value="">— No presentation (1 unit = 1 base unit) —</option>
       {data.presentations.map((p) => (

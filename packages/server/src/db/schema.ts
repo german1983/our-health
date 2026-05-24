@@ -83,13 +83,20 @@ export const products = pgTable(
     brand: text('brand'),
     brandId: uuid('brand_id').references(() => brands.id),
     imageUrl: text('image_url'),
+    /** Owning finance category (drives the nutrition display gate). */
+    categoryId: uuid('category_id').references((): AnyPgColumn => categories.id, {
+      onDelete: 'set null',
+    }),
     nutritionalFacts: jsonb('nutritional_facts').$type<NutritionalFacts | null>(),
     nutritionBaseAmount: doublePrecision('nutrition_base_amount').notNull().default(100),
     nutritionBaseUnit: text('nutrition_base_unit').notNull().default('g'),
     offRawData: jsonb('off_raw_data').$type<unknown>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('products_brand_id_idx').on(t.brandId)],
+  (t) => [
+    index('products_brand_id_idx').on(t.brandId),
+    index('products_category_id_idx').on(t.categoryId),
+  ],
 );
 
 export const productPresentations = pgTable(
@@ -231,6 +238,8 @@ export const categories = pgTable(
     level: integer('level').notNull().default(0),
     sortOrder: integer('sort_order').notNull().default(0),
     icon: text('icon'),
+    /** When true, products in this category show their nutritional facts. */
+    hasNutritionalFacts: boolean('has_nutritional_facts').notNull().default(false),
   },
   (t) => [
     index('categories_household_id_idx').on(t.householdId),
@@ -519,6 +528,7 @@ export const brandsRelations = relations(brands, ({ many }) => ({
 
 export const productsRelations = relations(products, ({ one, many }) => ({
   brandRef: one(brands, { fields: [products.brandId], references: [brands.id] }),
+  category: one(categories, { fields: [products.categoryId], references: [categories.id] }),
   priceRecords: many(priceRecords),
   storageItems: many(storageItems),
   recipeIngredients: many(recipeIngredients),

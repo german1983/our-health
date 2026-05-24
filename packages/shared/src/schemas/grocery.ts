@@ -24,6 +24,7 @@ export const createProductSchema = z.object({
   name: z.string().min(1, 'Product name is required').max(200),
   brand: z.string().max(200).optional(),
   imageUrl: z.string().url().optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   nutritionalFacts: nutritionalFactsSchema.optional(),
   nutritionBaseAmount: z.number().positive().optional(),
   nutritionBaseUnit: unitCodeSchema.optional(),
@@ -34,6 +35,7 @@ export const updateProductSchema = z.object({
   brand: z.string().max(200).nullable().optional(),
   barcode: z.string().nullable().optional(),
   imageUrl: z.string().url().nullable().optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   nutritionalFacts: nutritionalFactsSchema.nullable().optional(),
   nutritionBaseAmount: z.number().positive().optional(),
   nutritionBaseUnit: unitCodeSchema.optional(),
@@ -98,6 +100,11 @@ export interface ProductResponse {
   name: string;
   brand: string | null;
   imageUrl: string | null;
+  /** Owning finance category, drives nutrition display gating. */
+  categoryId: string | null;
+  categoryName: string | null;
+  /** Cached from the category — clients use this to decide whether to render facts. */
+  categoryHasNutritionalFacts: boolean;
   nutritionalFacts: NutritionalFacts | null;
   nutritionBaseAmount: number;
   nutritionBaseUnit: string;

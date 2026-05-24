@@ -4,38 +4,54 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
-import type { ProductResponse } from '@personal-budget/shared';
+import type { CreateProductInput, ProductResponse } from '@personal-budget/shared';
+import {
+  ProductForm,
+  emptyProductForm,
+  formToCreateInput,
+  type ProductFormState,
+} from '@/features/products/product-form';
 
 interface Props {
   open: boolean;
   initialQuery: string;
   /** Best-guess code from the receipt (used to prefill the barcode field). */
   initialBarcode?: string | null;
+  /** Finance category of the receipt line being matched — prefills the new product. */
+  initialCategoryId?: string | null;
   onSelect: (productId: string) => void;
   onClose: () => void;
 }
 
-export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSelect, onClose }: Props) {
+export function ProductPickerDialog({
+  open,
+  initialQuery,
+  initialBarcode,
+  initialCategoryId,
+  onSelect,
+  onClose,
+}: Props) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState(initialQuery);
   const [mode, setMode] = useState<'search' | 'create'>('search');
   // Once the user explicitly picks a tab, stop auto-switching.
   const [modePinned, setModePinned] = useState(false);
-  const [newName, setNewName] = useState(initialQuery);
-  const [newBarcode, setNewBarcode] = useState(initialBarcode ?? '');
-  const [newBrand, setNewBrand] = useState('');
+  const [form, setForm] = useState<ProductFormState>(emptyProductForm);
 
   // Reset state when dialog opens with a new initial query.
   useEffect(() => {
     if (open) {
       setQuery(initialQuery);
-      setNewName(initialQuery);
-      setNewBarcode(initialBarcode ?? '');
-      setNewBrand('');
+      setForm({
+        ...emptyProductForm,
+        name: initialQuery,
+        barcode: initialBarcode ?? '',
+        categoryId: initialCategoryId ?? '',
+      });
       setMode('search');
       setModePinned(false);
     }
-  }, [open, initialQuery, initialBarcode]);
+  }, [open, initialQuery, initialBarcode, initialCategoryId]);
 
   const { data: results, isFetching } = useQuery({
     queryKey: ['products', query],
@@ -58,7 +74,7 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
   }, [open, modePinned, isFetching, results, query]);
 
   const createMutation = useMutation({
-    mutationFn: (input: { name: string; barcode?: string; brand?: string }) =>
+    mutationFn: (input: CreateProductInput) =>
       api.post<ProductResponse>('/products', input).then((r) => r.data),
     onSuccess: (product) => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
@@ -68,13 +84,8 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
 
   function handleCreate(e: FormEvent) {
     e.preventDefault();
-    const name = newName.trim();
-    if (!name) return;
-    createMutation.mutate({
-      name,
-      barcode: newBarcode.trim() || undefined,
-      brand: newBrand.trim() || undefined,
-    });
+    if (!form.name.trim()) return;
+    createMutation.mutate(formToCreateInput(form));
   }
 
   return (
@@ -150,18 +161,9 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
         </div>
       ) : (
         <form onSubmit={handleCreate} className="space-y-3">
-          <label className="block space-y-1 text-sm">
-            <span className="text-xs text-muted-foreground">Name *</span>
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} required maxLength={200} />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="text-xs text-muted-foreground">Barcode / UPC (optional)</span>
-            <Input value={newBarcode} onChange={(e) => setNewBarcode(e.target.value)} className="font-mono" />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="text-xs text-muted-foreground">Brand (optional)</span>
-            <Input value={newBrand} onChange={(e) => setNewBrand(e.target.value)} maxLength={200} />
-          </label>
+          <div className="max-h-[60vh] overflow-y-auto">
+            <ProductForm value={form} onChange={setForm} />
+          </div>
           {createMutation.error && (
             <p className="text-sm text-destructive">
               {(createMutation.error as { response?: { data?: { error?: string } } })
@@ -170,7 +172,7 @@ export function ProductPickerDialog({ open, initialQuery, initialBarcode, onSele
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={createMutation.isPending || !newName.trim()}>
+            <Button type="submit" disabled={createMutation.isPending || !form.name.trim()}>
               {createMutation.isPending ? 'Creating…' : 'Create & link'}
             </Button>
           </DialogFooter>

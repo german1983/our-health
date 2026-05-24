@@ -35,7 +35,10 @@ import type {
 // ==================== Products ====================
 
 export async function lookupByBarcode(barcode: string): Promise<ProductResponse> {
-  const existing = await db.query.products.findFirst({ where: eq(products.barcode, barcode) });
+  const existing = await db.query.products.findFirst({
+    where: eq(products.barcode, barcode),
+    with: { category: true },
+  });
   if (existing) return formatProduct(existing);
 
   const offData = await fetchProductByBarcode(barcode);
@@ -51,7 +54,7 @@ export async function lookupByBarcode(barcode: string): Promise<ProductResponse>
     brandId = brand.id;
   }
 
-  const [product] = await db
+  const [inserted] = await db
     .insert(products)
     .values({
       barcode,
@@ -62,9 +65,13 @@ export async function lookupByBarcode(barcode: string): Promise<ProductResponse>
       nutritionalFacts: (offData.nutritionalFacts ?? null) as NutritionalFacts | null,
       offRawData: offData.rawData,
     })
-    .returning();
+    .returning({ id: products.id });
 
-  return formatProduct(product);
+  const created = await db.query.products.findFirst({
+    where: eq(products.id, inserted.id),
+    with: { category: true },
+  });
+  return formatProduct(created!);
 }
 
 export async function searchProducts(query?: string, page = 1, limit = 20) {
@@ -82,6 +89,7 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
       orderBy: asc(products.name),
       limit,
       offset: (page - 1) * limit,
+      with: { category: true },
     }),
     db.$count(products, where),
   ]);
@@ -96,7 +104,10 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
 }
 
 export async function getProductDetail(id: string, householdId: string): Promise<ProductDetailResponse> {
-  const product = await db.query.products.findFirst({ where: eq(products.id, id) });
+  const product = await db.query.products.findFirst({
+    where: eq(products.id, id),
+    with: { category: true },
+  });
   if (!product) throw new NotFoundError('Product');
 
   const storageRows = await db
@@ -261,13 +272,17 @@ export async function deleteProductPresentation(id: string): Promise<void> {
 }
 
 export async function updateProduct(id: string, input: UpdateProductInput): Promise<ProductResponse> {
-  const existing = await db.query.products.findFirst({ where: eq(products.id, id) });
+  const existing = await db.query.products.findFirst({
+    where: eq(products.id, id),
+    with: { category: true },
+  });
   if (!existing) throw new NotFoundError('Product');
 
   const updates: Partial<typeof products.$inferInsert> = {};
   if (input.name !== undefined) updates.name = input.name;
   if (input.barcode !== undefined) updates.barcode = input.barcode;
   if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
+  if (input.categoryId !== undefined) updates.categoryId = input.categoryId;
   if (input.nutritionalFacts !== undefined) updates.nutritionalFacts = input.nutritionalFacts;
   if (input.nutritionBaseAmount !== undefined) updates.nutritionBaseAmount = input.nutritionBaseAmount;
   if (input.nutritionBaseUnit !== undefined) updates.nutritionBaseUnit = input.nutritionBaseUnit;
@@ -288,8 +303,12 @@ export async function updateProduct(id: string, input: UpdateProductInput): Prom
 
   if (Object.keys(updates).length === 0) return formatProduct(existing);
 
-  const [updated] = await db.update(products).set(updates).where(eq(products.id, id)).returning();
-  return formatProduct(updated);
+  await db.update(products).set(updates).where(eq(products.id, id));
+  const updated = await db.query.products.findFirst({
+    where: eq(products.id, id),
+    with: { category: true },
+  });
+  return formatProduct(updated!);
 }
 
 export async function createProduct(input: CreateProductInput): Promise<ProductResponse> {
@@ -311,13 +330,18 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
       brand: input.brand,
       brandId,
       imageUrl: input.imageUrl,
+      categoryId: input.categoryId ?? null,
       nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
       nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
       nutritionBaseUnit: input.nutritionBaseUnit ?? 'g',
     })
-    .returning();
+    .returning({ id: products.id });
 
-  return formatProduct(product);
+  const created = await db.query.products.findFirst({
+    where: eq(products.id, product.id),
+    with: { category: true },
+  });
+  return formatProduct(created!);
 }
 
 // ==================== Brands ====================
@@ -493,13 +517,20 @@ export async function comparePrices(productId: string): Promise<PriceRecordRespo
 
 // ==================== Helpers ====================
 
-function formatProduct(p: typeof products.$inferSelect): ProductResponse {
+type ProductWithCategory = typeof products.$inferSelect & {
+  category?: { id: string; name: string; hasNutritionalFacts: boolean } | null;
+};
+
+function formatProduct(p: ProductWithCategory): ProductResponse {
   return {
     id: p.id,
     barcode: p.barcode,
     name: p.name,
     brand: p.brand,
     imageUrl: p.imageUrl,
+    categoryId: p.categoryId ?? null,
+    categoryName: p.category?.name ?? null,
+    categoryHasNutritionalFacts: p.category?.hasNutritionalFacts ?? false,
     nutritionalFacts: p.nutritionalFacts,
     nutritionBaseAmount: p.nutritionBaseAmount,
     nutritionBaseUnit: p.nutritionBaseUnit,

@@ -34,6 +34,7 @@ export async function getCategoryTree(householdId: string): Promise<CategoryResp
       level: cat.level,
       icon: cat.icon,
       sortOrder: cat.sortOrder,
+      hasNutritionalFacts: cat.hasNutritionalFacts,
       children: [],
     });
   }
@@ -73,6 +74,7 @@ export async function createCategory(
       level,
       icon: input.icon,
       sortOrder: input.sortOrder,
+      hasNutritionalFacts: input.hasNutritionalFacts ?? false,
     })
     .returning();
 
@@ -84,6 +86,7 @@ export async function createCategory(
     level: category.level,
     icon: category.icon,
     sortOrder: category.sortOrder,
+    hasNutritionalFacts: category.hasNutritionalFacts,
   };
 }
 
@@ -124,6 +127,7 @@ export async function updateCategory(
     level: category.level,
     icon: category.icon,
     sortOrder: category.sortOrder,
+    hasNutritionalFacts: category.hasNutritionalFacts,
   };
 }
 
