@@ -25,6 +25,17 @@ router.get('/products/barcode/:code', authenticate, async (req, res, next) => {
   }
 });
 
+// Inspect a barcode without committing — returns either the existing presentation
+// match, an OFF candidate to be confirmed, or not-found.
+router.get('/products/barcode-preview/:code', authenticate, async (req, res, next) => {
+  try {
+    const preview = await groceryService.previewBarcode(req.params.code);
+    res.json(preview);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/products', authenticate, validate(productSearchSchema, 'query'), async (req, res, next) => {
   try {
     const { query, page, limit } = req.query as unknown as { query?: string; page: number; limit: number };

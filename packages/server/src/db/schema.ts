@@ -78,7 +78,6 @@ export const products = pgTable(
   'products',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    barcode: text('barcode').unique(),
     name: text('name').notNull(),
     brand: text('brand'),
     brandId: uuid('brand_id').references(() => brands.id),
@@ -110,6 +109,8 @@ export const productPresentations = pgTable(
     amount: doublePrecision('amount').notNull(),
     /** Unit code (e.g. 'g', 'ml', 'unit'). */
     unit: text('unit').notNull(),
+    /** Consumer-facing barcode/GTIN for this specific size. Unique when set. */
+    barcode: text('barcode').unique(),
     /** At most one default per product (enforced in service). */
     isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -469,12 +470,16 @@ export const chainProductCodes = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     chainId: uuid('chain_id').notNull().references(() => chains.id, { onDelete: 'cascade' }),
     code: text('code').notNull(),
-    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    /** Chain SKU points at a specific presentation (the consumer-facing
+        size/SKU); the parent product is reached via the presentation. */
+    presentationId: uuid('presentation_id').notNull().references(() => productPresentations.id, {
+      onDelete: 'cascade',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('chain_product_codes_chain_id_code_uq').on(t.chainId, t.code),
-    index('chain_product_codes_product_idx').on(t.productId),
+    index('chain_product_codes_presentation_idx').on(t.presentationId),
   ],
 );
 
@@ -535,13 +540,13 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   intakeEntries: many(intakeEntries),
   productServingUnits: many(productServingUnits),
   receiptItems: many(receiptItems),
-  chainCodes: many(chainProductCodes),
   presentations: many(productPresentations),
 }));
 
 export const productPresentationsRelations = relations(productPresentations, ({ one, many }) => ({
   product: one(products, { fields: [productPresentations.productId], references: [products.id] }),
   receiptItems: many(receiptItems),
+  chainCodes: many(chainProductCodes),
 }));
 
 export const storesRelations = relations(stores, ({ one, many }) => ({
@@ -675,7 +680,10 @@ export const chainTaxCodesRelations = relations(chainTaxCodes, ({ one }) => ({
 
 export const chainProductCodesRelations = relations(chainProductCodes, ({ one }) => ({
   chain: one(chains, { fields: [chainProductCodes.chainId], references: [chains.id] }),
-  product: one(products, { fields: [chainProductCodes.productId], references: [products.id] }),
+  presentation: one(productPresentations, {
+    fields: [chainProductCodes.presentationId],
+    references: [productPresentations.id],
+  }),
 }));
 
 export const receiptAdjustmentsRelations = relations(receiptAdjustments, ({ one }) => ({

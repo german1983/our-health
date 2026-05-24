@@ -96,7 +96,7 @@ type ItemWithRelations = {
   unit: string;
   addedAt: Date;
   expiryDate: Date | null;
-  product: { name: string; barcode: string | null };
+  product: { name: string };
   storageSpace: { name: string; sortOrder: number };
   addedBy: { name: string };
 };
@@ -193,7 +193,6 @@ function formatItem(item: ItemWithRelations): StorageItemResponse {
     spaceName: item.storageSpace.name,
     productId: item.productId,
     productName: item.product.name,
-    productBarcode: item.product.barcode,
     quantity: item.quantity,
     unit: item.unit,
     addedAt: item.addedAt.toISOString(),

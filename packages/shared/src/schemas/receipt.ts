@@ -54,6 +54,9 @@ export type ConfirmReceiptItemInput = z.infer<typeof confirmReceiptItemSchema>;
 
 export const matchReceiptItemSchema = z.object({
   productId: z.string().uuid().nullable(),
+  /** Optional. When set, the match lands on this specific presentation
+      instead of the product's default. */
+  presentationId: z.string().uuid().nullable().optional(),
   saveChainCode: z.boolean().default(true),
   applyToReceipt: z.boolean().default(true),
 });
