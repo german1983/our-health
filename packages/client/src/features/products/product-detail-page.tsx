@@ -12,12 +12,15 @@ import { UNITS } from '@personal-budget/shared';
 import type {
   CategoryResponse,
   CreateProductPresentationInput,
+  CreateServingUnitInput,
   ProductDetailResponse,
   ProductPresentationResponse,
   ProductStorageEntry,
+  ServingUnitResponse,
   StorageSpaceResponse,
   UpdateProductInput,
   UpdateProductPresentationInput,
+  UpdateServingUnitInput,
   UpdateStorageItemInput,
 } from '@personal-budget/shared';
 import {
@@ -131,6 +134,39 @@ export function ProductDetailPage() {
     mutationFn: (pid: string) => api.delete(`/products/presentations/${pid}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+    },
+  });
+
+  // Custom-unit conversions live on a separate endpoint (the intake module
+  // owns them today). They're household-shared per product.
+  const { data: servingUnits } = useQuery({
+    queryKey: ['intake', 'serving-units', id],
+    queryFn: () =>
+      api
+        .get<ServingUnitResponse[]>('/intake/serving-units', { params: { productId: id } })
+        .then((r) => r.data),
+    enabled: !!id,
+  });
+
+  const addServingUnitMutation = useMutation({
+    mutationFn: (data: CreateServingUnitInput) => api.post('/intake/serving-units', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['intake', 'serving-units', id] });
+    },
+  });
+
+  const updateServingUnitMutation = useMutation({
+    mutationFn: ({ unitId, data }: { unitId: string; data: UpdateServingUnitInput }) =>
+      api.patch(`/intake/serving-units/${unitId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['intake', 'serving-units', id] });
+    },
+  });
+
+  const deleteServingUnitMutation = useMutation({
+    mutationFn: (unitId: string) => api.delete(`/intake/serving-units/${unitId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['intake', 'serving-units', id] });
     },
   });
 
@@ -286,6 +322,17 @@ export function ProductDetailPage() {
         onUpdate={(pid, data) => updatePresentationMutation.mutate({ pid, data })}
         onDelete={(pid) => deletePresentationMutation.mutate(pid)}
         adding={addPresentationMutation.isPending}
+      />
+
+      {/* Custom unit conversions */}
+      <CustomUnitsCard
+        productId={product.id}
+        baseUnit={product.nutritionBaseUnit}
+        units={servingUnits ?? []}
+        onAdd={(data) => addServingUnitMutation.mutate(data)}
+        onUpdate={(unitId, data) => updateServingUnitMutation.mutate({ unitId, data })}
+        onDelete={(unitId) => deleteServingUnitMutation.mutate(unitId)}
+        adding={addServingUnitMutation.isPending}
       />
 
       {/* Stock / Storage entries */}
@@ -600,6 +647,185 @@ function PresentationsCard({
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+interface CustomUnitsCardProps {
+  productId: string;
+  baseUnit: string;
+  units: ServingUnitResponse[];
+  onAdd: (data: CreateServingUnitInput) => void;
+  onUpdate: (unitId: string, data: UpdateServingUnitInput) => void;
+  onDelete: (unitId: string) => void;
+  adding: boolean;
+}
+
+/**
+ * Defines product-specific unit conversions (e.g., "1 slice = 21 g"). The
+ * left side is the named unit, the right side is always expressed in the
+ * product's nutrition base unit. Recipes and intake use these to translate
+ * between mass and count without the user doing the math.
+ */
+function CustomUnitsCard({
+  productId,
+  baseUnit,
+  units,
+  onAdd,
+  onUpdate,
+  onDelete,
+  adding,
+}: CustomUnitsCardProps) {
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+
+  function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    const v = parseFloat(amount);
+    if (!name.trim() || !Number.isFinite(v) || v <= 0) return;
+    onAdd({ productId, name: name.trim(), baseUnitEquivalent: v });
+    setName('');
+    setAmount('');
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Custom units</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Product-specific conversions between named units and mass/volume. Example: define{' '}
+          <span className="font-mono">1 slice = 21 g</span> so recipes and intake can ask
+          for "2 slices of roast beef" and get 42 g.
+        </p>
+
+        {units.length > 0 && (
+          <div className="space-y-2">
+            {units.map((u) => (
+              <CustomUnitRow
+                key={u.id}
+                unit={u}
+                baseUnit={baseUnit}
+                onUpdate={(data) => onUpdate(u.id, data)}
+                onDelete={() => onDelete(u.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleAdd}
+          className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto_auto] gap-2 items-end pt-2 border-t border-border"
+        >
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Unit name</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g., slice, scoop, piece"
+              required
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">= amount in {baseUnit}</label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="21"
+              required
+            />
+          </div>
+          <span className="text-xs text-muted-foreground pb-2">{baseUnit}</span>
+          <Button type="submit" size="sm" disabled={adding || !name.trim() || !amount}>
+            Add
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+interface CustomUnitRowProps {
+  unit: ServingUnitResponse;
+  baseUnit: string;
+  onUpdate: (data: UpdateServingUnitInput) => void;
+  onDelete: () => void;
+}
+
+function CustomUnitRow({ unit, baseUnit, onUpdate, onDelete }: CustomUnitRowProps) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(unit.name);
+  const [amount, setAmount] = useState(String(unit.baseUnitEquivalent));
+
+  function startEdit() {
+    setName(unit.name);
+    setAmount(String(unit.baseUnitEquivalent));
+    setEditing(true);
+  }
+
+  function save() {
+    const v = parseFloat(amount);
+    if (!name.trim() || !Number.isFinite(v) || v <= 0) return;
+    onUpdate({ name: name.trim(), baseUnitEquivalent: v });
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto_auto] gap-2 items-end p-3 rounded border border-border bg-muted/30">
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">Unit name</label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">= amount in {baseUnit}</label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground pb-2">{baseUnit}</span>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={save}>
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
+      <div className="text-sm">
+        <span className="font-mono">1 {unit.name}</span>
+        <span className="text-muted-foreground"> = </span>
+        <span className="font-mono">{unit.baseUnitEquivalent} {baseUnit}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button size="sm" variant="ghost" onClick={startEdit}>
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            if (confirm(`Remove unit "${unit.name}"?`)) onDelete();
+          }}
+          className="text-destructive hover:text-destructive"
+        >
+          Remove
+        </Button>
+      </div>
+    </div>
   );
 }
 

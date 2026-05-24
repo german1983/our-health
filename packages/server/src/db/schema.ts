@@ -343,15 +343,14 @@ export const productServingUnits = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     /** How many of the product's base unit (nutrition_base_unit) one of this serving equals. */
     baseUnitEquivalent: doublePrecision('base_unit_equivalent').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('product_serving_units_product_user_name_uq').on(t.productId, t.userId, t.name),
-    index('product_serving_units_product_user_idx').on(t.productId, t.userId),
+    uniqueIndex('product_serving_units_product_name_uq').on(t.productId, t.name),
+    index('product_serving_units_product_idx').on(t.productId),
   ],
 );
 
@@ -638,7 +637,6 @@ export const intakeEntriesRelations = relations(intakeEntries, ({ one }) => ({
 
 export const productServingUnitsRelations = relations(productServingUnits, ({ one, many }) => ({
   product: one(products, { fields: [productServingUnits.productId], references: [products.id] }),
-  user: one(users, { fields: [productServingUnits.userId], references: [users.id] }),
   intakeEntries: many(intakeEntries),
 }));
 
