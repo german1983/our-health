@@ -14,6 +14,7 @@ import {
 import { NotFoundError } from '../../lib/errors.js';
 import { fetchProductByBarcode } from '../../integrations/open-food-facts.js';
 import type {
+  BarcodePreviewResponse,
   CreateProductInput,
   UpdateProductInput,
   CreateProductPresentationInput,
@@ -23,6 +24,7 @@ import type {
   CreatePriceRecordInput,
   BrandResponse,
   NutritionalFacts,
+  ProductCreateDefaultPresentationInput,
   ProductResponse,
   ProductDetailResponse,
   ProductPresentationResponse,
@@ -34,52 +36,83 @@ import type {
 
 // ==================== Products ====================
 
+/**
+ * Find a product by scanned barcode. Looks at the presentation barcodes
+ * first (Model B: barcode lives on the SKU, not the conceptual product);
+ * falls back to creating a new Product + default Presentation from OFF data
+ * if nothing local matches.
+ */
 export async function lookupByBarcode(barcode: string): Promise<ProductResponse> {
-  const existing = await db.query.products.findFirst({
-    where: eq(products.barcode, barcode),
-    with: { category: true },
+  const match = await db.query.productPresentations.findFirst({
+    where: eq(productPresentations.barcode, barcode),
+    with: { product: { with: { category: true, presentations: true } } },
   });
-  if (existing) return formatProduct(existing);
+  if (match?.product) return formatProduct(match.product);
 
   const offData = await fetchProductByBarcode(barcode);
   if (!offData) throw new NotFoundError('Product not found for this barcode');
 
-  let brandId: string | undefined;
-  if (offData.brand) {
-    const [brand] = await db
-      .insert(brands)
-      .values({ name: offData.brand })
-      .onConflictDoUpdate({ target: brands.name, set: { name: offData.brand } })
-      .returning();
-    brandId = brand.id;
+  const size = offData.packageSize;
+  return createProduct({
+    name: offData.name,
+    brand: offData.brand ?? undefined,
+    imageUrl: offData.imageUrl ?? undefined,
+    nutritionalFacts: offData.nutritionalFacts ?? undefined,
+    defaultPresentation: {
+      name: offData.packageSizeLabel ?? 'Default',
+      amount: size?.amount ?? 1,
+      unit: size?.unit ?? 'unit',
+      barcode,
+    },
+  });
+}
+
+/**
+ * Decide what to do when an unknown barcode is scanned in the receipt flow.
+ * The client uses this to offer the user three options: pick the existing
+ * match, create a new product, or attach to an existing product (new size
+ * or barcode reissue).
+ */
+export async function previewBarcode(barcode: string): Promise<BarcodePreviewResponse> {
+  const match = await db.query.productPresentations.findFirst({
+    where: eq(productPresentations.barcode, barcode),
+    with: { product: { with: { category: true, presentations: true } } },
+  });
+  if (match?.product) {
+    return {
+      kind: 'existing',
+      product: formatProduct(match.product),
+      presentationId: match.id,
+    };
   }
 
-  const [inserted] = await db
-    .insert(products)
-    .values({
-      barcode,
-      name: offData.name,
-      brand: offData.brand,
-      brandId,
-      imageUrl: offData.imageUrl,
-      nutritionalFacts: (offData.nutritionalFacts ?? null) as NutritionalFacts | null,
-      offRawData: offData.rawData,
-    })
-    .returning({ id: products.id });
+  const offData = await fetchProductByBarcode(barcode);
+  if (!offData) return { kind: 'not-found' };
 
-  const created = await db.query.products.findFirst({
-    where: eq(products.id, inserted.id),
-    with: { category: true },
-  });
-  return formatProduct(created!);
+  const size = offData.packageSize;
+  return {
+    kind: 'off-candidate',
+    name: offData.name,
+    brand: offData.brand,
+    imageUrl: offData.imageUrl,
+    nutritionalFacts: offData.nutritionalFacts,
+    suggestedPresentation: size
+      ? { name: offData.packageSizeLabel ?? `${size.amount} ${size.unit}`, amount: size.amount, unit: size.unit }
+      : null,
+  };
 }
 
 export async function searchProducts(query?: string, page = 1, limit = 20) {
+  // Barcode lives on presentations now — `?query=` matching by barcode means
+  // "does any presentation under this product have this barcode?"
   const where = query
     ? or(
         ilike(products.name, `%${query}%`),
         ilike(products.brand, `%${query}%`),
-        ilike(products.barcode, `%${query}%`),
+        sql`EXISTS (
+          SELECT 1 FROM ${productPresentations} pp
+          WHERE pp.product_id = ${products.id} AND pp.barcode ILIKE ${`%${query}%`}
+        )`,
       )
     : undefined;
 
@@ -89,7 +122,7 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
       orderBy: asc(products.name),
       limit,
       offset: (page - 1) * limit,
-      with: { category: true },
+      with: { category: true, presentations: true },
     }),
     db.$count(products, where),
   ]);
@@ -106,7 +139,7 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
 export async function getProductDetail(id: string, householdId: string): Promise<ProductDetailResponse> {
   const product = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true },
+    with: { category: true, presentations: true },
   });
   if (!product) throw new NotFoundError('Product');
 
@@ -186,6 +219,7 @@ function formatPresentation(p: typeof productPresentations.$inferSelect): Produc
     name: p.name,
     amount: p.amount,
     unit: p.unit,
+    barcode: p.barcode,
     isDefault: p.isDefault,
   };
 }
@@ -217,6 +251,7 @@ export async function addProductPresentation(
       name: input.name,
       amount: input.amount,
       unit: input.unit,
+      barcode: input.barcode ?? null,
       isDefault: input.isDefault ?? false,
     });
   });
@@ -251,6 +286,7 @@ export async function updateProductPresentation(
     if (input.name !== undefined) updates.name = input.name;
     if (input.amount !== undefined) updates.amount = input.amount;
     if (input.unit !== undefined) updates.unit = input.unit;
+    if (input.barcode !== undefined) updates.barcode = input.barcode ?? null;
     if (input.isDefault !== undefined) updates.isDefault = input.isDefault;
     if (Object.keys(updates).length > 0) {
       await tx.update(productPresentations).set(updates).where(eq(productPresentations.id, id));
@@ -274,13 +310,12 @@ export async function deleteProductPresentation(id: string): Promise<void> {
 export async function updateProduct(id: string, input: UpdateProductInput): Promise<ProductResponse> {
   const existing = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true },
+    with: { category: true, presentations: true },
   });
   if (!existing) throw new NotFoundError('Product');
 
   const updates: Partial<typeof products.$inferInsert> = {};
   if (input.name !== undefined) updates.name = input.name;
-  if (input.barcode !== undefined) updates.barcode = input.barcode;
   if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
   if (input.categoryId !== undefined) updates.categoryId = input.categoryId;
   if (input.nutritionalFacts !== undefined) updates.nutritionalFacts = input.nutritionalFacts;
@@ -306,7 +341,7 @@ export async function updateProduct(id: string, input: UpdateProductInput): Prom
   await db.update(products).set(updates).where(eq(products.id, id));
   const updated = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true },
+    with: { category: true, presentations: true },
   });
   return formatProduct(updated!);
 }
@@ -322,24 +357,45 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
     brandId = brand.id;
   }
 
-  const [product] = await db
-    .insert(products)
-    .values({
-      barcode: input.barcode,
-      name: input.name,
-      brand: input.brand,
-      brandId,
-      imageUrl: input.imageUrl,
-      categoryId: input.categoryId ?? null,
-      nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
-      nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
-      nutritionBaseUnit: input.nutritionBaseUnit ?? 'g',
-    })
-    .returning({ id: products.id });
+  // Always seed a default presentation. If the caller supplied size info,
+  // use it; otherwise plant a placeholder so the product is immediately usable
+  // in receipts and storage.
+  const defaultPres: ProductCreateDefaultPresentationInput = input.defaultPresentation ?? {
+    name: 'Default',
+    amount: 1,
+    unit: 'unit',
+  };
+
+  const newProductId = await db.transaction(async (tx) => {
+    const [product] = await tx
+      .insert(products)
+      .values({
+        name: input.name,
+        brand: input.brand,
+        brandId,
+        imageUrl: input.imageUrl,
+        categoryId: input.categoryId ?? null,
+        nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
+        nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
+        nutritionBaseUnit: input.nutritionBaseUnit ?? 'g',
+      })
+      .returning({ id: products.id });
+
+    await tx.insert(productPresentations).values({
+      productId: product.id,
+      name: defaultPres.name,
+      amount: defaultPres.amount,
+      unit: defaultPres.unit,
+      barcode: defaultPres.barcode ?? null,
+      isDefault: true,
+    });
+
+    return product.id;
+  });
 
   const created = await db.query.products.findFirst({
-    where: eq(products.id, product.id),
-    with: { category: true },
+    where: eq(products.id, newProductId),
+    with: { category: true, presentations: true },
   });
   return formatProduct(created!);
 }
@@ -519,12 +575,18 @@ export async function comparePrices(productId: string): Promise<PriceRecordRespo
 
 type ProductWithCategory = typeof products.$inferSelect & {
   category?: { id: string; name: string; hasNutritionalFacts: boolean } | null;
+  /** Optional — present when the caller joined presentations for the barcode hoist. */
+  presentations?: { id: string; isDefault: boolean; barcode: string | null }[];
 };
 
 function formatProduct(p: ProductWithCategory): ProductResponse {
+  // Barcode now lives on the SKU (presentation); expose the default's barcode
+  // as the product-level barcode for backwards-compat with simple list views.
+  const defaultBarcode =
+    p.presentations?.find((pp) => pp.isDefault)?.barcode ?? null;
   return {
     id: p.id,
-    barcode: p.barcode,
+    barcode: defaultBarcode,
     name: p.name,
     brand: p.brand,
     imageUrl: p.imageUrl,

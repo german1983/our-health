@@ -145,12 +145,20 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
 
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
+      // Chain SKU codes now point at a specific presentation; the parent
+      // product is reached via that presentation. This means matching a chain
+      // code automatically lands on the right size (700 g vs 1 kg).
       let productId: string | null = null;
+      let presentationId: string | null = null;
       if (item.rawCode && chainId) {
         const mapping = await db.query.chainProductCodes.findFirst({
           where: and(eq(chainProductCodes.chainId, chainId), eq(chainProductCodes.code, item.rawCode)),
+          with: { presentation: true },
         });
-        productId = mapping?.productId ?? null;
+        if (mapping?.presentation) {
+          presentationId = mapping.presentation.id;
+          productId = mapping.presentation.productId;
+        }
       }
       let taxCategoryId: string | null = null;
       if (item.taxCode && chainId) {
@@ -158,16 +166,6 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
           where: and(eq(chainTaxCodes.chainId, chainId), eq(chainTaxCodes.code, item.taxCode)),
         });
         taxCategoryId = taxMapping?.taxCategoryId ?? null;
-      }
-      let presentationId: string | null = null;
-      if (productId) {
-        const def = await db.query.productPresentations.findFirst({
-          where: and(
-            eq(productPresentations.productId, productId),
-            eq(productPresentations.isDefault, true),
-          ),
-        });
-        presentationId = def?.id ?? null;
       }
       return {
         rawName: item.rawName,
@@ -448,14 +446,19 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
   const matchedItems = await Promise.all(
     parsed.items.map(async (item) => {
       let productId: string | null = null;
+      let presentationId: string | null = null;
       if (item.rawCode && chainId) {
         const mapping = await db.query.chainProductCodes.findFirst({
           where: and(
             eq(chainProductCodes.chainId, chainId),
             eq(chainProductCodes.code, item.rawCode),
           ),
+          with: { presentation: true },
         });
-        productId = mapping?.productId ?? null;
+        if (mapping?.presentation) {
+          presentationId = mapping.presentation.id;
+          productId = mapping.presentation.productId;
+        }
       }
       let taxCategoryId: string | null = null;
       if (item.taxCode && chainId) {
@@ -474,6 +477,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
         lineTotal: item.lineTotal,
         matched: !!productId,
         productId,
+        presentationId,
       };
     }),
   );
@@ -510,7 +514,10 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
 export interface MatchItemArgs {
   receiptItemId: string;
   productId: string | null;
-  /** Persist the (chain, rawCode) -> productId mapping for future receipts. */
+  /** When set, override the product's default presentation for this match.
+      Used by the "new size of existing product" flow in the picker dialog. */
+  presentationId?: string | null;
+  /** Persist the (chain, rawCode) -> presentation mapping for future receipts. */
   saveChainCode: boolean;
   /** Cascade the match to other lines on this receipt that share the same rawCode. */
   applyToReceipt: boolean;
@@ -536,16 +543,28 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
     if (!product) throw new NotFoundError('Product');
   }
 
-  // Auto-apply the product's default presentation on match; clear on unmatch.
-  let defaultPresentationId: string | null = null;
+  // Resolve which presentation this match should land on. Explicit beats
+  // default; on unmatch, clear it.
+  let resolvedPresentationId: string | null = null;
   if (args.productId) {
-    const def = await db.query.productPresentations.findFirst({
-      where: and(
-        eq(productPresentations.productId, args.productId),
-        eq(productPresentations.isDefault, true),
-      ),
-    });
-    defaultPresentationId = def?.id ?? null;
+    if (args.presentationId) {
+      const pres = await db.query.productPresentations.findFirst({
+        where: and(
+          eq(productPresentations.id, args.presentationId),
+          eq(productPresentations.productId, args.productId),
+        ),
+      });
+      if (!pres) throw new NotFoundError('Presentation');
+      resolvedPresentationId = pres.id;
+    } else {
+      const def = await db.query.productPresentations.findFirst({
+        where: and(
+          eq(productPresentations.productId, args.productId),
+          eq(productPresentations.isDefault, true),
+        ),
+      });
+      resolvedPresentationId = def?.id ?? null;
+    }
   }
 
   await db.transaction(async (tx) => {
@@ -555,7 +574,7 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
       .set({
         productId: args.productId,
         matched: !!args.productId,
-        presentationId: args.productId ? defaultPresentationId : null,
+        presentationId: args.productId ? resolvedPresentationId : null,
       })
       .where(eq(receiptItems.id, item.id));
 
@@ -566,7 +585,7 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
         .set({
           productId: args.productId,
           matched: !!args.productId,
-          presentationId: args.productId ? defaultPresentationId : null,
+          presentationId: args.productId ? resolvedPresentationId : null,
         })
         .where(
           and(eq(receiptItems.receiptId, item.receiptId), eq(receiptItems.rawCode, item.rawCode)),
@@ -574,11 +593,14 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
     }
 
     // Persist the chain-level mapping so future receipts from this chain
-    // auto-match this rawCode without manual intervention.
+    // auto-match this rawCode without manual intervention. The mapping points
+    // at the product's default presentation; if the user later associates a
+    // chain code with a specific non-default size, this row can be updated.
     if (
       args.saveChainCode &&
       item.rawCode &&
       args.productId &&
+      resolvedPresentationId &&
       item.receipt.chainId
     ) {
       await tx
@@ -586,11 +608,11 @@ export async function matchReceiptItem(args: MatchItemArgs): Promise<ReceiptResp
         .values({
           chainId: item.receipt.chainId,
           code: item.rawCode,
-          productId: args.productId,
+          presentationId: resolvedPresentationId,
         })
         .onConflictDoUpdate({
           target: [chainProductCodes.chainId, chainProductCodes.code],
-          set: { productId: args.productId },
+          set: { presentationId: resolvedPresentationId },
         });
     }
 

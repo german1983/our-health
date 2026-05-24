@@ -49,7 +49,6 @@ export function ProductDetailPage() {
   // Basic fields form
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
-  const [barcode, setBarcode] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [categoryId, setCategoryId] = useState('');
 
@@ -80,7 +79,6 @@ export function ProductDetailPage() {
     if (!product) return;
     setName(product.name);
     setBrand(product.brand ?? '');
-    setBarcode(product.barcode ?? '');
     setImageUrl(product.imageUrl ?? '');
     setCategoryId(product.categoryId ?? '');
     setNutritionForm(nutritionToForm(product.nutritionalFacts));
@@ -141,7 +139,6 @@ export function ProductDetailPage() {
     updateProductMutation.mutate({
       name,
       brand: brand || null,
-      barcode: barcode || null,
       imageUrl: imageUrl || null,
       categoryId: categoryId || null,
     });
@@ -197,15 +194,7 @@ export function ProductDetailPage() {
                   <label className="text-sm font-medium">Brand</label>
                   <Input value={brand} onChange={(e) => setBrand(e.target.value)} />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Barcode</label>
-                  <Input
-                    value={barcode}
-                    onChange={(e) => setBarcode(e.target.value)}
-                    className="font-mono"
-                  />
-                </div>
-                <div className="space-y-2">
+                <div className="space-y-2 sm:col-span-2">
                   <label className="text-sm font-medium">Image URL</label>
                   <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
                 </div>
@@ -504,12 +493,14 @@ function PresentationsCard({
   const [newName, setNewName] = useState('');
   const [newAmount, setNewAmount] = useState('');
   const [newUnit, setNewUnit] = useState('g');
+  const [newBarcode, setNewBarcode] = useState('');
   const [newDefault, setNewDefault] = useState(false);
 
   function reset() {
     setNewName('');
     setNewAmount('');
     setNewUnit('g');
+    setNewBarcode('');
     setNewDefault(false);
   }
 
@@ -521,6 +512,7 @@ function PresentationsCard({
       name: newName.trim(),
       amount: amt,
       unit: newUnit,
+      barcode: newBarcode.trim() || undefined,
       isDefault: newDefault,
     });
     reset();
@@ -552,48 +544,59 @@ function PresentationsCard({
 
         <form
           onSubmit={handleAdd}
-          className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto_auto] gap-2 items-end pt-2 border-t border-border"
+          className="space-y-2 pt-2 border-t border-border"
         >
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto_auto] gap-2 items-end">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Name</label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g., 800 g jar"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Amount</label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={newAmount}
+                onChange={(e) => setNewAmount(e.target.value)}
+                placeholder="800"
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Unit</label>
+              <Select value={newUnit} onChange={(e) => setNewUnit(e.target.value)}>
+                {ALL_UNITS.map((u) => (
+                  <option key={u.code} value={u.code}>{u.code}</option>
+                ))}
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground pb-2">
+              <input
+                type="checkbox"
+                checked={newDefault}
+                onChange={(e) => setNewDefault(e.target.checked)}
+              />
+              Default
+            </label>
+            <Button type="submit" size="sm" disabled={adding || !newName.trim() || !newAmount}>
+              Add
+            </Button>
+          </div>
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Name</label>
+            <label className="text-xs text-muted-foreground">Barcode / GTIN (optional)</label>
             <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g., 800 g jar"
-              required
+              value={newBarcode}
+              onChange={(e) => setNewBarcode(e.target.value)}
+              placeholder="e.g., 8001505005707"
+              className="font-mono text-xs"
             />
           </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Amount</label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={newAmount}
-              onChange={(e) => setNewAmount(e.target.value)}
-              placeholder="800"
-              required
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Unit</label>
-            <Select value={newUnit} onChange={(e) => setNewUnit(e.target.value)}>
-              {ALL_UNITS.map((u) => (
-                <option key={u.code} value={u.code}>{u.code}</option>
-              ))}
-            </Select>
-          </div>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground pb-2">
-            <input
-              type="checkbox"
-              checked={newDefault}
-              onChange={(e) => setNewDefault(e.target.checked)}
-            />
-            Default
-          </label>
-          <Button type="submit" size="sm" disabled={adding || !newName.trim() || !newAmount}>
-            Add
-          </Button>
         </form>
       </CardContent>
     </Card>
@@ -611,11 +614,13 @@ function PresentationRow({ presentation, onUpdate, onDelete }: PresentationRowPr
   const [name, setName] = useState(presentation.name);
   const [amount, setAmount] = useState(String(presentation.amount));
   const [unit, setUnit] = useState(presentation.unit);
+  const [barcode, setBarcode] = useState(presentation.barcode ?? '');
 
   function startEdit() {
     setName(presentation.name);
     setAmount(String(presentation.amount));
     setUnit(presentation.unit);
+    setBarcode(presentation.barcode ?? '');
     setEditing(true);
   }
 
@@ -624,41 +629,53 @@ function PresentationRow({ presentation, onUpdate, onDelete }: PresentationRowPr
       name: name.trim(),
       amount: parseFloat(amount),
       unit,
+      barcode: barcode.trim() ? barcode.trim() : null,
     });
     setEditing(false);
   }
 
   if (editing) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto] gap-2 items-end p-3 rounded border border-border bg-muted/30">
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Name</label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
+      <div className="space-y-2 p-3 rounded border border-border bg-muted/30">
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_100px_100px_auto] gap-2 items-end">
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Name</label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Amount</label>
+            <Input
+              type="number"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Unit</label>
+            <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              {ALL_UNITS.map((u) => (
+                <option key={u.code} value={u.code}>{u.code}</option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save}>
+              Save
+            </Button>
+          </div>
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Amount</label>
+          <label className="text-xs text-muted-foreground">Barcode / GTIN</label>
           <Input
-            type="number"
-            step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            className="font-mono text-xs"
+            placeholder="(optional)"
           />
-        </div>
-        <div className="space-y-1">
-          <label className="text-xs text-muted-foreground">Unit</label>
-          <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
-            {ALL_UNITS.map((u) => (
-              <option key={u.code} value={u.code}>{u.code}</option>
-            ))}
-          </Select>
-        </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={save}>
-            Save
-          </Button>
         </div>
       </div>
     );
@@ -675,6 +692,9 @@ function PresentationRow({ presentation, onUpdate, onDelete }: PresentationRowPr
         </div>
         <div className="text-xs text-muted-foreground">
           {presentation.amount} {presentation.unit}
+          {presentation.barcode && (
+            <span className="ml-2 font-mono">· {presentation.barcode}</span>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-1">

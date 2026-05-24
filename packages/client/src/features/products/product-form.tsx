@@ -29,37 +29,56 @@ function flattenExpenseCategories(tree: CategoryResponse[]): CategoryResponse[] 
 export interface ProductFormState {
   name: string;
   brand: string;
-  barcode: string;
   imageUrl: string;
   categoryId: string;
   baseAmount: string;
   baseUnit: string;
   nutrition: NutritionFormState;
+  /** Primary (default) presentation that gets created alongside the product. */
+  presentationName: string;
+  presentationAmount: string;
+  presentationUnit: string;
+  presentationBarcode: string;
 }
 
 export const emptyProductForm: ProductFormState = {
   name: '',
   brand: '',
-  barcode: '',
   imageUrl: '',
   categoryId: '',
   baseAmount: '100',
   baseUnit: 'g',
   nutrition: emptyNutritionForm,
+  presentationName: '',
+  presentationAmount: '',
+  presentationUnit: 'g',
+  presentationBarcode: '',
 };
 
 /** Build the input payload that `POST /products` expects from form state. */
 export function formToCreateInput(form: ProductFormState): CreateProductInput {
   const baseAmount = parseFloat(form.baseAmount);
+  const presAmount = parseFloat(form.presentationAmount);
+  const hasPresentation =
+    form.presentationName.trim().length > 0 &&
+    Number.isFinite(presAmount) &&
+    presAmount > 0;
   return {
     name: form.name.trim(),
     brand: form.brand.trim() || undefined,
-    barcode: form.barcode.trim() || undefined,
     imageUrl: form.imageUrl.trim() || undefined,
     categoryId: form.categoryId || null,
     nutritionBaseAmount: Number.isFinite(baseAmount) && baseAmount > 0 ? baseAmount : undefined,
     nutritionBaseUnit: form.baseUnit,
     nutritionalFacts: formToNutrition(form.nutrition) ?? undefined,
+    defaultPresentation: hasPresentation
+      ? {
+          name: form.presentationName.trim(),
+          amount: presAmount,
+          unit: form.presentationUnit,
+          barcode: form.presentationBarcode.trim() || undefined,
+        }
+      : undefined,
   };
 }
 
@@ -122,15 +141,7 @@ export function ProductForm({ value, onChange, twoColumn = true }: ProductFormPr
           <label className="text-sm font-medium">Brand</label>
           <Input value={value.brand} onChange={(e) => set('brand', e.target.value)} />
         </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Barcode</label>
-          <Input
-            value={value.barcode}
-            onChange={(e) => set('barcode', e.target.value)}
-            className="font-mono"
-          />
-        </div>
-        <div className="space-y-1">
+        <div className="space-y-1 sm:col-span-2">
           <label className="text-sm font-medium">Image URL</label>
           <Input
             value={value.imageUrl}
@@ -161,6 +172,60 @@ export function ProductForm({ value, onChange, twoColumn = true }: ProductFormPr
             </p>
           )}
         </div>
+      </div>
+
+      {/* Primary presentation. This is the SKU you actually buy — the barcode
+          lives here, not on the conceptual product. Additional sizes can be
+          added later from the product detail page. */}
+      <div className="space-y-2 pt-2 border-t border-border">
+        <div className="text-sm font-medium">Primary presentation (the size you usually buy)</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="space-y-1 col-span-2">
+            <label className="text-xs text-muted-foreground">Name</label>
+            <Input
+              value={value.presentationName}
+              onChange={(e) => set('presentationName', e.target.value)}
+              placeholder="e.g. 800 g jar"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Amount</label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={value.presentationAmount}
+              onChange={(e) => set('presentationAmount', e.target.value)}
+              placeholder="800"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Unit</label>
+            <Select
+              value={value.presentationUnit}
+              onChange={(e) => set('presentationUnit', e.target.value)}
+            >
+              {ALL_UNITS.map((u) => (
+                <option key={u.code} value={u.code}>
+                  {u.code}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="space-y-1 col-span-2 sm:col-span-4">
+            <label className="text-xs text-muted-foreground">Barcode / GTIN</label>
+            <Input
+              value={value.presentationBarcode}
+              onChange={(e) => set('presentationBarcode', e.target.value)}
+              className="font-mono"
+              placeholder="(optional — bulk produce can skip this)"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Skip the name/amount to plant a generic "Default" 1-unit placeholder you can edit
+          later.
+        </p>
       </div>
 
       {showNutrition ? (

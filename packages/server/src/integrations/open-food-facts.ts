@@ -7,6 +7,7 @@ interface OFFProduct {
   product_name?: string;
   brands?: string;
   image_url?: string;
+  quantity?: string;
   nutriments?: {
     'energy-kcal_100g'?: number;
     fat_100g?: number;
@@ -32,11 +33,38 @@ interface OFFResponse {
   product?: OFFProduct;
 }
 
+/** Map common free-text unit suffixes in OFF's `quantity` field onto our unit codes. */
+const UNIT_ALIASES: Record<string, string> = {
+  g: 'g', gr: 'g', gram: 'g', grams: 'g',
+  kg: 'kg', kilogram: 'kg', kilograms: 'kg',
+  mg: 'mg',
+  ml: 'ml', millilitre: 'ml', milliliter: 'ml',
+  l: 'l', lt: 'l', liter: 'l', litre: 'l',
+  cl: 'cl',
+  oz: 'oz',
+  lb: 'lb', lbs: 'lb',
+};
+
+/** Pull a size out of OFF's `quantity` string, e.g. "800 g" → 800/g; "1 kg" → 1/kg. */
+function parseQuantity(raw?: string): { amount: number; unit: string } | null {
+  if (!raw) return null;
+  const m = raw.trim().toLowerCase().match(/^(\d+(?:[.,]\d+)?)\s*([a-z]+)/);
+  if (!m) return null;
+  const amount = parseFloat(m[1].replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const unit = UNIT_ALIASES[m[2]];
+  return unit ? { amount, unit } : null;
+}
+
 export async function fetchProductByBarcode(barcode: string): Promise<{
   name: string;
   brand: string | null;
   imageUrl: string | null;
   nutritionalFacts: NutritionalFacts | null;
+  /** Parsed size hint from OFF's `quantity` field, when one is recognizable. */
+  packageSize: { amount: number; unit: string } | null;
+  /** Raw quantity string for display ("800 g"). */
+  packageSizeLabel: string | null;
   rawData: unknown;
 } | null> {
   try {
@@ -79,6 +107,8 @@ export async function fetchProductByBarcode(barcode: string): Promise<{
       brand: p.brands || null,
       imageUrl: p.image_url || null,
       nutritionalFacts,
+      packageSize: parseQuantity(p.quantity),
+      packageSizeLabel: p.quantity || null,
       rawData: data.product,
     };
   } catch (err) {

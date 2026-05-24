@@ -48,7 +48,6 @@ export interface StorageItemResponse {
   spaceName: string;
   productId: string;
   productName: string;
-  productBarcode: string | null;
   quantity: number;
   unit: string;
   addedAt: string;

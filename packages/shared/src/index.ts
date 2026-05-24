@@ -66,6 +66,8 @@ export {
   type ProductResponse,
   type ProductDetailResponse,
   type ProductPresentationResponse,
+  type BarcodePreviewResponse,
+  type ProductCreateDefaultPresentationInput,
   type ProductStorageEntry,
   type ProductPurchaseEntry,
   type StoreResponse,

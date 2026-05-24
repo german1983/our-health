@@ -161,14 +161,16 @@ router.patch(
   validate(matchReceiptItemSchema),
   async (req, res, next) => {
     try {
-      const { productId, saveChainCode, applyToReceipt } = req.body as {
+      const { productId, presentationId, saveChainCode, applyToReceipt } = req.body as {
         productId: string | null;
+        presentationId?: string | null;
         saveChainCode: boolean;
         applyToReceipt: boolean;
       };
       const receipt = await receiptService.matchReceiptItem({
         receiptItemId: req.params.itemId,
         productId,
+        presentationId,
         saveChainCode,
         applyToReceipt,
         householdId: req.householdId!,

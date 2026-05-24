@@ -19,8 +19,15 @@ export const nutritionalFactsSchema = z.object({
   cholesterol: z.number().min(0).optional(),
 });
 
-export const createProductSchema = z.object({
+/** Optional initial presentation supplied alongside product creation. */
+export const productCreateDefaultPresentationSchema = z.object({
+  name: z.string().min(1).max(100),
+  amount: z.number().positive(),
+  unit: unitCodeSchema,
   barcode: z.string().optional(),
+});
+
+export const createProductSchema = z.object({
   name: z.string().min(1, 'Product name is required').max(200),
   brand: z.string().max(200).optional(),
   imageUrl: z.string().url().optional(),
@@ -28,12 +35,17 @@ export const createProductSchema = z.object({
   nutritionalFacts: nutritionalFactsSchema.optional(),
   nutritionBaseAmount: z.number().positive().optional(),
   nutritionBaseUnit: unitCodeSchema.optional(),
+  /**
+   * If supplied, the server creates this as the default presentation in the
+   * same transaction. Otherwise a placeholder "Default" 1-unit presentation
+   * is synthesized so the product is immediately usable in receipts/storage.
+   */
+  defaultPresentation: productCreateDefaultPresentationSchema.optional(),
 });
 
 export const updateProductSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   brand: z.string().max(200).nullable().optional(),
-  barcode: z.string().nullable().optional(),
   imageUrl: z.string().url().nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   nutritionalFacts: nutritionalFactsSchema.nullable().optional(),
@@ -60,11 +72,17 @@ export const createProductPresentationSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   amount: z.number().positive('Amount must be positive'),
   unit: unitCodeSchema,
+  /** Consumer barcode/GTIN for this size. Optional (e.g. bulk produce). */
+  barcode: z.string().optional(),
   isDefault: z.boolean().optional(),
 });
 export type CreateProductPresentationInput = z.infer<typeof createProductPresentationSchema>;
 
-export const updateProductPresentationSchema = createProductPresentationSchema.partial();
+export const updateProductPresentationSchema = createProductPresentationSchema
+  .extend({
+    barcode: z.string().nullable().optional(),
+  })
+  .partial();
 export type UpdateProductPresentationInput = z.infer<typeof updateProductPresentationSchema>;
 
 export const productSearchSchema = z.object({
@@ -83,6 +101,7 @@ export const priceHistoryQuerySchema = z.object({
 
 export type NutritionalFacts = z.infer<typeof nutritionalFactsSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
+export type ProductCreateDefaultPresentationInput = z.infer<typeof productCreateDefaultPresentationSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 export type CreateStoreInput = z.infer<typeof createStoreSchema>;
 export type UpdateStoreInput = z.infer<typeof updateStoreSchema>;
@@ -96,6 +115,7 @@ export interface BrandResponse {
 
 export interface ProductResponse {
   id: string;
+  /** Derived field: barcode of the default presentation, if any. */
   barcode: string | null;
   name: string;
   brand: string | null;
@@ -110,6 +130,28 @@ export interface ProductResponse {
   nutritionBaseUnit: string;
   createdAt: string;
 }
+
+/**
+ * Result of `GET /products/barcode-preview` — used by the receipt picker to
+ * decide whether to surface "new product" vs "new size of existing product"
+ * vs "barcode reissue" UX.
+ */
+export type BarcodePreviewResponse =
+  | {
+      kind: 'existing';
+      product: ProductResponse;
+      presentationId: string;
+    }
+  | {
+      kind: 'off-candidate';
+      name: string;
+      brand: string | null;
+      imageUrl: string | null;
+      nutritionalFacts: NutritionalFacts | null;
+      /** Best-effort parse of OFF's "quantity" string into a presentation. */
+      suggestedPresentation: { name: string; amount: number; unit: string } | null;
+    }
+  | { kind: 'not-found' };
 
 export interface StoreResponse {
   id: string;
@@ -162,6 +204,7 @@ export interface ProductPresentationResponse {
   name: string;
   amount: number;
   unit: string;
+  barcode: string | null;
   isDefault: boolean;
 }
 

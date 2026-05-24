@@ -197,10 +197,19 @@ export function ReceiptDetailPage() {
   });
 
   const matchProduct = useMutation({
-    mutationFn: async (input: { itemId: string; productId: string | null }) => {
+    mutationFn: async (input: {
+      itemId: string;
+      productId: string | null;
+      presentationId?: string | null;
+    }) => {
       const { data } = await api.patch<ReceiptResponse>(
         `/receipts/items/${input.itemId}/product`,
-        { productId: input.productId, saveChainCode: true, applyToReceipt: true },
+        {
+          productId: input.productId,
+          presentationId: input.presentationId,
+          saveChainCode: true,
+          applyToReceipt: true,
+        },
       );
       return data;
     },
@@ -729,9 +738,9 @@ export function ReceiptDetailPage() {
         initialBarcode={pickerItem?.rawCode ?? null}
         initialCategoryId={pickerItem?.financeCategoryId ?? receipt?.defaultCategoryId ?? null}
         onClose={() => setPickerItem(null)}
-        onSelect={(productId) => {
+        onSelect={(productId, presentationId) => {
           if (pickerItem) {
-            matchProduct.mutate({ itemId: pickerItem.id, productId });
+            matchProduct.mutate({ itemId: pickerItem.id, productId, presentationId });
           }
           setPickerItem(null);
         }}
