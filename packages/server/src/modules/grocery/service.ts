@@ -3,6 +3,7 @@ import { db } from '../../lib/db.js';
 import {
   brands,
   products,
+  productImages,
   productPresentations,
   stores,
   priceRecords,
@@ -17,6 +18,8 @@ import type {
   BarcodePreviewResponse,
   CreateProductInput,
   UpdateProductInput,
+  CreateProductImageInput,
+  UpdateProductImageInput,
   CreateProductPresentationInput,
   UpdateProductPresentationInput,
   CreateStoreInput,
@@ -25,6 +28,7 @@ import type {
   BrandResponse,
   NutritionalFacts,
   ProductCreateDefaultPresentationInput,
+  ProductImageResponse,
   ProductResponse,
   ProductDetailResponse,
   ProductPresentationResponse,
@@ -45,7 +49,7 @@ import type {
 export async function lookupByBarcode(barcode: string): Promise<ProductResponse> {
   const match = await db.query.productPresentations.findFirst({
     where: eq(productPresentations.barcode, barcode),
-    with: { product: { with: { category: true, presentations: true } } },
+    with: { product: { with: { category: true, presentations: true, brandRef: true, images: true } } },
   });
   if (match?.product) return formatProduct(match.product);
 
@@ -76,7 +80,7 @@ export async function lookupByBarcode(barcode: string): Promise<ProductResponse>
 export async function previewBarcode(barcode: string): Promise<BarcodePreviewResponse> {
   const match = await db.query.productPresentations.findFirst({
     where: eq(productPresentations.barcode, barcode),
-    with: { product: { with: { category: true, presentations: true } } },
+    with: { product: { with: { category: true, presentations: true, brandRef: true, images: true } } },
   });
   if (match?.product) {
     return {
@@ -104,11 +108,15 @@ export async function previewBarcode(barcode: string): Promise<BarcodePreviewRes
 
 export async function searchProducts(query?: string, page = 1, limit = 20) {
   // Barcode lives on presentations now — `?query=` matching by barcode means
-  // "does any presentation under this product have this barcode?"
+  // "does any presentation under this product have this barcode?" Brand
+  // matches go through the brands table (which is now the source of truth).
   const where = query
     ? or(
         ilike(products.name, `%${query}%`),
-        ilike(products.brand, `%${query}%`),
+        sql`EXISTS (
+          SELECT 1 FROM ${brands} b
+          WHERE b.id = ${products.brandId} AND b.name ILIKE ${`%${query}%`}
+        )`,
         sql`EXISTS (
           SELECT 1 FROM ${productPresentations} pp
           WHERE pp.product_id = ${products.id} AND pp.barcode ILIKE ${`%${query}%`}
@@ -122,7 +130,7 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
       orderBy: asc(products.name),
       limit,
       offset: (page - 1) * limit,
-      with: { category: true, presentations: true },
+      with: { category: true, presentations: true, brandRef: true, images: true },
     }),
     db.$count(products, where),
   ]);
@@ -139,7 +147,7 @@ export async function searchProducts(query?: string, page = 1, limit = 20) {
 export async function getProductDetail(id: string, householdId: string): Promise<ProductDetailResponse> {
   const product = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true, presentations: true },
+    with: { category: true, presentations: true, brandRef: true, images: true },
   });
   if (!product) throw new NotFoundError('Product');
 
@@ -307,23 +315,112 @@ export async function deleteProductPresentation(id: string): Promise<void> {
   await db.delete(productPresentations).where(eq(productPresentations.id, id));
 }
 
+// ==================== Product Images ====================
+
+function formatProductImage(img: typeof productImages.$inferSelect): ProductImageResponse {
+  return {
+    id: img.id,
+    productId: img.productId,
+    url: img.url,
+    isPrimary: img.isPrimary,
+    sortOrder: img.sortOrder,
+  };
+}
+
+export async function getProductImages(productId: string): Promise<ProductImageResponse[]> {
+  const rows = await db.query.productImages.findMany({
+    where: eq(productImages.productId, productId),
+    orderBy: [asc(productImages.sortOrder), asc(productImages.createdAt)],
+  });
+  return rows.map(formatProductImage);
+}
+
+export async function addProductImage(
+  productId: string,
+  input: CreateProductImageInput,
+): Promise<ProductImageResponse> {
+  const product = await db.query.products.findFirst({ where: eq(products.id, productId) });
+  if (!product) throw new NotFoundError('Product');
+
+  const inserted = await db.transaction(async (tx) => {
+    if (input.isPrimary) {
+      // At most one primary per product — clear the previous one first.
+      await tx
+        .update(productImages)
+        .set({ isPrimary: false })
+        .where(eq(productImages.productId, productId));
+    }
+    const [row] = await tx
+      .insert(productImages)
+      .values({
+        productId,
+        url: input.url,
+        isPrimary: input.isPrimary ?? false,
+        sortOrder: input.sortOrder ?? 0,
+      })
+      .returning();
+    return row;
+  });
+
+  return formatProductImage(inserted);
+}
+
+export async function updateProductImage(
+  id: string,
+  input: UpdateProductImageInput,
+): Promise<ProductImageResponse> {
+  const existing = await db.query.productImages.findFirst({
+    where: eq(productImages.id, id),
+  });
+  if (!existing) throw new NotFoundError('Image');
+
+  const updated = await db.transaction(async (tx) => {
+    if (input.isPrimary === true) {
+      await tx
+        .update(productImages)
+        .set({ isPrimary: false })
+        .where(eq(productImages.productId, existing.productId));
+    }
+    const updates: Partial<typeof productImages.$inferInsert> = {};
+    if (input.url !== undefined) updates.url = input.url;
+    if (input.isPrimary !== undefined) updates.isPrimary = input.isPrimary;
+    if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
+    if (Object.keys(updates).length > 0) {
+      await tx.update(productImages).set(updates).where(eq(productImages.id, id));
+    }
+    const [row] = await tx
+      .select()
+      .from(productImages)
+      .where(eq(productImages.id, id));
+    return row;
+  });
+
+  return formatProductImage(updated);
+}
+
+export async function deleteProductImage(id: string): Promise<void> {
+  const existing = await db.query.productImages.findFirst({
+    where: eq(productImages.id, id),
+  });
+  if (!existing) throw new NotFoundError('Image');
+  await db.delete(productImages).where(eq(productImages.id, id));
+}
+
 export async function updateProduct(id: string, input: UpdateProductInput): Promise<ProductResponse> {
   const existing = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true, presentations: true },
+    with: { category: true, presentations: true, brandRef: true, images: true },
   });
   if (!existing) throw new NotFoundError('Product');
 
   const updates: Partial<typeof products.$inferInsert> = {};
   if (input.name !== undefined) updates.name = input.name;
-  if (input.imageUrl !== undefined) updates.imageUrl = input.imageUrl;
   if (input.categoryId !== undefined) updates.categoryId = input.categoryId;
   if (input.nutritionalFacts !== undefined) updates.nutritionalFacts = input.nutritionalFacts;
   if (input.nutritionBaseAmount !== undefined) updates.nutritionBaseAmount = input.nutritionBaseAmount;
   if (input.nutritionBaseUnit !== undefined) updates.nutritionBaseUnit = input.nutritionBaseUnit;
 
   if (input.brand !== undefined) {
-    updates.brand = input.brand;
     if (input.brand) {
       const [brand] = await db
         .insert(brands)
@@ -341,7 +438,7 @@ export async function updateProduct(id: string, input: UpdateProductInput): Prom
   await db.update(products).set(updates).where(eq(products.id, id));
   const updated = await db.query.products.findFirst({
     where: eq(products.id, id),
-    with: { category: true, presentations: true },
+    with: { category: true, presentations: true, brandRef: true, images: true },
   });
   return formatProduct(updated!);
 }
@@ -371,9 +468,7 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
       .insert(products)
       .values({
         name: input.name,
-        brand: input.brand,
         brandId,
-        imageUrl: input.imageUrl,
         categoryId: input.categoryId ?? null,
         nutritionalFacts: (input.nutritionalFacts ?? null) as NutritionalFacts | null,
         nutritionBaseAmount: input.nutritionBaseAmount ?? 100,
@@ -390,12 +485,23 @@ export async function createProduct(input: CreateProductInput): Promise<ProductR
       isDefault: true,
     });
 
+    // Seed the primary image when one was supplied at create time. Further
+    // images get added/managed through the dedicated /images endpoints.
+    if (input.imageUrl) {
+      await tx.insert(productImages).values({
+        productId: product.id,
+        url: input.imageUrl,
+        isPrimary: true,
+        sortOrder: 0,
+      });
+    }
+
     return product.id;
   });
 
   const created = await db.query.products.findFirst({
     where: eq(products.id, newProductId),
-    with: { category: true, presentations: true },
+    with: { category: true, presentations: true, brandRef: true, images: true },
   });
   return formatProduct(created!);
 }
@@ -575,21 +681,39 @@ export async function comparePrices(productId: string): Promise<PriceRecordRespo
 
 type ProductWithCategory = typeof products.$inferSelect & {
   category?: { id: string; name: string; hasNutritionalFacts: boolean } | null;
+  /** Brand reference — brand name now lives on the brands table. */
+  brandRef?: { id: string; name: string } | null;
   /** Optional — present when the caller joined presentations for the barcode hoist. */
   presentations?: { id: string; isDefault: boolean; barcode: string | null }[];
+  /** Optional — present when the caller joined images for the gallery. */
+  images?: { id: string; productId: string; url: string; isPrimary: boolean; sortOrder: number; createdAt: Date }[];
 };
 
 function formatProduct(p: ProductWithCategory): ProductResponse {
-  // Barcode now lives on the SKU (presentation); expose the default's barcode
-  // as the product-level barcode for backwards-compat with simple list views.
   const defaultBarcode =
     p.presentations?.find((pp) => pp.isDefault)?.barcode ?? null;
+  const orderedImages = (p.images ?? [])
+    .slice()
+    .sort(
+      (a, b) =>
+        a.sortOrder - b.sortOrder || a.createdAt.getTime() - b.createdAt.getTime(),
+    );
+  // imageUrl is the primary image's url; fall back to the first image when no
+  // row is flagged primary (e.g., legacy data freshly inserted).
+  const primary = orderedImages.find((img) => img.isPrimary) ?? orderedImages[0];
   return {
     id: p.id,
     barcode: defaultBarcode,
     name: p.name,
-    brand: p.brand,
-    imageUrl: p.imageUrl,
+    brand: p.brandRef?.name ?? null,
+    imageUrl: primary?.url ?? null,
+    images: orderedImages.map((img) => ({
+      id: img.id,
+      productId: img.productId,
+      url: img.url,
+      isPrimary: img.isPrimary,
+      sortOrder: img.sortOrder,
+    })),
     categoryId: p.categoryId ?? null,
     categoryName: p.category?.name ?? null,
     categoryHasNutritionalFacts: p.category?.hasNutritionalFacts ?? false,

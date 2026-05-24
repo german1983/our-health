@@ -11,13 +11,16 @@ import { formatCurrency, formatDate } from '@/lib/utils';
 import { UNITS } from '@personal-budget/shared';
 import type {
   CategoryResponse,
+  CreateProductImageInput,
   CreateProductPresentationInput,
   CreateServingUnitInput,
   ProductDetailResponse,
+  ProductImageResponse,
   ProductPresentationResponse,
   ProductStorageEntry,
   ServingUnitResponse,
   StorageSpaceResponse,
+  UpdateProductImageInput,
   UpdateProductInput,
   UpdateProductPresentationInput,
   UpdateServingUnitInput,
@@ -52,7 +55,6 @@ export function ProductDetailPage() {
   // Basic fields form
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
   const [categoryId, setCategoryId] = useState('');
 
   const { data: categoryTree } = useQuery({
@@ -82,7 +84,6 @@ export function ProductDetailPage() {
     if (!product) return;
     setName(product.name);
     setBrand(product.brand ?? '');
-    setImageUrl(product.imageUrl ?? '');
     setCategoryId(product.categoryId ?? '');
     setNutritionForm(nutritionToForm(product.nutritionalFacts));
     setBaseAmount(String(product.nutritionBaseAmount));
@@ -137,6 +138,31 @@ export function ProductDetailPage() {
     },
   });
 
+  const addImageMutation = useMutation({
+    mutationFn: (data: CreateProductImageInput) => api.post(`/products/${id}/images`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+
+  const updateImageMutation = useMutation({
+    mutationFn: ({ imgId, data }: { imgId: string; data: UpdateProductImageInput }) =>
+      api.patch(`/products/images/${imgId}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+
+  const deleteImageMutation = useMutation({
+    mutationFn: (imgId: string) => api.delete(`/products/images/${imgId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products', 'detail', id] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+
   // Custom-unit conversions live on a separate endpoint (the intake module
   // owns them today). They're household-shared per product.
   const { data: servingUnits } = useQuery({
@@ -175,7 +201,6 @@ export function ProductDetailPage() {
     updateProductMutation.mutate({
       name,
       brand: brand || null,
-      imageUrl: imageUrl || null,
       categoryId: categoryId || null,
     });
   }
@@ -213,9 +238,9 @@ export function ProductDetailPage() {
         <CardContent>
           <form onSubmit={handleSaveBasic} className="space-y-4">
             <div className="flex items-start gap-4">
-              {imageUrl && (
+              {product.imageUrl && (
                 <img
-                  src={imageUrl}
+                  src={product.imageUrl}
                   alt={name}
                   className="w-24 h-24 object-cover rounded border border-border flex-shrink-0"
                   onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
@@ -229,10 +254,6 @@ export function ProductDetailPage() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Brand</label>
                   <Input value={brand} onChange={(e) => setBrand(e.target.value)} />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <label className="text-sm font-medium">Image URL</label>
-                  <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <label className="text-sm font-medium">Category</label>
@@ -255,6 +276,15 @@ export function ProductDetailPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Images */}
+      <ImagesCard
+        images={product.images}
+        onAdd={(data) => addImageMutation.mutate(data)}
+        onUpdate={(imgId, data) => updateImageMutation.mutate({ imgId, data })}
+        onDelete={(imgId) => deleteImageMutation.mutate(imgId)}
+        adding={addImageMutation.isPending}
+      />
 
       {/* Nutritional Facts — only rendered for products in categories that
           track nutrition (e.g. Groceries). Cleaning supplies skip this. */}
@@ -981,3 +1011,129 @@ function PresentationRow({ presentation, onUpdate, onDelete }: PresentationRowPr
   );
 }
 
+
+interface ImagesCardProps {
+  images: ProductImageResponse[];
+  onAdd: (data: CreateProductImageInput) => void;
+  onUpdate: (imgId: string, data: UpdateProductImageInput) => void;
+  onDelete: (imgId: string) => void;
+  adding: boolean;
+}
+
+/**
+ * Gallery of image URLs for a product. The "primary" one is what other views
+ * show as the product's headline image; the rest are extras. Drag-reorder is
+ * deferred — users can adjust sort order if needed but most products will only
+ * have a couple of images.
+ */
+function ImagesCard({ images, onAdd, onUpdate, onDelete, adding }: ImagesCardProps) {
+  const [newUrl, setNewUrl] = useState('');
+  const [newPrimary, setNewPrimary] = useState(false);
+
+  function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    const url = newUrl.trim();
+    if (!url) return;
+    onAdd({ url, isPrimary: images.length === 0 ? true : newPrimary });
+    setNewUrl('');
+    setNewPrimary(false);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Images</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          URLs only — the app doesn't host uploads. The "primary" image is what
+          shows in lists and headers.
+        </p>
+
+        {images.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {images.map((img) => (
+              <div
+                key={img.id}
+                className="space-y-2 p-2 rounded border border-border"
+              >
+                <img
+                  src={img.url}
+                  alt=""
+                  className="w-full aspect-square object-cover rounded border border-border"
+                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.opacity = '0.3')}
+                />
+                <div className="flex items-center justify-between gap-1">
+                  {img.isPrimary ? (
+                    <Badge variant="secondary" className="text-xs">Primary</Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onUpdate(img.id, { isPrimary: true })}
+                      className="text-xs h-7"
+                    >
+                      Set primary
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      if (confirm('Remove this image?')) onDelete(img.id);
+                    }}
+                    className="text-xs h-7 text-destructive hover:text-destructive"
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <a
+                  href={img.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[10px] font-mono text-muted-foreground truncate hover:underline"
+                  title={img.url}
+                >
+                  {img.url}
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleAdd}
+          className="space-y-2 pt-2 border-t border-border"
+        >
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Image URL</label>
+            <Input
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="https://..."
+              type="url"
+              required
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            {images.length > 0 ? (
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={newPrimary}
+                  onChange={(e) => setNewPrimary(e.target.checked)}
+                />
+                Make this the primary image
+              </label>
+            ) : (
+              <span className="text-xs text-muted-foreground">First image becomes primary automatically.</span>
+            )}
+            <Button type="submit" size="sm" disabled={adding || !newUrl.trim()}>
+              Add image
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}

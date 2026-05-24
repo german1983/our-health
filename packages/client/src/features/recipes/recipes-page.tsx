@@ -234,6 +234,16 @@ export function RecipesPage() {
             </DialogHeader>
             <div className="space-y-4 max-h-[60vh] overflow-y-auto">
               {recipeDetail.description && <p className="text-sm text-muted-foreground">{recipeDetail.description}</p>}
+              {recipeDetail.externalUrl && (
+                <a
+                  href={recipeDetail.externalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-primary hover:underline break-all"
+                >
+                  ↗ {recipeDetail.externalUrl}
+                </a>
+              )}
 
               <div className="text-sm">
                 <div className="font-medium">
@@ -284,6 +294,15 @@ export function RecipesPage() {
                   })}
                 </div>
               </div>
+
+              {recipeDetail.instructions && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium">Instructions</h4>
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                    {recipeDetail.instructions}
+                  </p>
+                </div>
+              )}
 
               {renderNutrition(recipeDetail.totalNutrition, 'Total nutrition')}
               {nutritionMode === 'per100g' && recipeDetail.per100gNutrition

@@ -79,9 +79,8 @@ export const products = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     name: text('name').notNull(),
-    brand: text('brand'),
+    /** Brand FK is the source of truth; `brands.name` is the display value. */
     brandId: uuid('brand_id').references(() => brands.id),
-    imageUrl: text('image_url'),
     /** Owning finance category (drives the nutrition display gate). */
     categoryId: uuid('category_id').references((): AnyPgColumn => categories.id, {
       onDelete: 'set null',
@@ -96,6 +95,20 @@ export const products = pgTable(
     index('products_brand_id_idx').on(t.brandId),
     index('products_category_id_idx').on(t.categoryId),
   ],
+);
+
+export const productImages = pgTable(
+  'product_images',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    /** At most one primary per product (enforced in service). The "default" image. */
+    isPrimary: boolean('is_primary').notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('product_images_product_idx').on(t.productId)],
 );
 
 export const productPresentations = pgTable(
@@ -199,12 +212,16 @@ export const recipes = pgTable(
     householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     description: text('description'),
+    /** Free-form multi-paragraph cooking steps. */
+    instructions: text('instructions'),
     servings: integer('servings').notNull().default(1),
     servingUnit: text('serving_unit'),
     servingWeightGrams: doublePrecision('serving_weight_grams'),
     prepTime: integer('prep_time'),
     cookTime: integer('cook_time'),
     imageUrl: text('image_url'),
+    /** User-provided link to an external recipe page (blog, video, etc.). */
+    externalUrl: text('external_url'),
     source: recipeSourceEnum('source').notNull().default('USER'),
     externalId: text('external_id'),
     createdById: uuid('created_by_id').notNull().references(() => users.id),
@@ -549,6 +566,11 @@ export const productsRelations = relations(products, ({ one, many }) => ({
   productServingUnits: many(productServingUnits),
   receiptItems: many(receiptItems),
   presentations: many(productPresentations),
+  images: many(productImages),
+}));
+
+export const productImagesRelations = relations(productImages, ({ one }) => ({
+  product: one(products, { fields: [productImages.productId], references: [products.id] }),
 }));
 
 export const productPresentationsRelations = relations(productPresentations, ({ one, many }) => ({

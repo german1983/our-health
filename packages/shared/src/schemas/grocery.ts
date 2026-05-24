@@ -46,12 +46,25 @@ export const createProductSchema = z.object({
 export const updateProductSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   brand: z.string().max(200).nullable().optional(),
-  imageUrl: z.string().url().nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   nutritionalFacts: nutritionalFactsSchema.nullable().optional(),
   nutritionBaseAmount: z.number().positive().optional(),
   nutritionBaseUnit: unitCodeSchema.optional(),
 });
+
+export const createProductImageSchema = z.object({
+  url: z.string().url(),
+  isPrimary: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+export type CreateProductImageInput = z.infer<typeof createProductImageSchema>;
+
+export const updateProductImageSchema = z.object({
+  url: z.string().url().optional(),
+  isPrimary: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).optional(),
+});
+export type UpdateProductImageInput = z.infer<typeof updateProductImageSchema>;
 
 export const createStoreSchema = z.object({
   name: z.string().min(1, 'Store name is required').max(200),
@@ -113,13 +126,25 @@ export interface BrandResponse {
   name: string;
 }
 
+export interface ProductImageResponse {
+  id: string;
+  productId: string;
+  url: string;
+  isPrimary: boolean;
+  sortOrder: number;
+}
+
 export interface ProductResponse {
   id: string;
   /** Derived field: barcode of the default presentation, if any. */
   barcode: string | null;
   name: string;
+  /** Joined from the brands table — `brands.name` is the source of truth now. */
   brand: string | null;
+  /** Derived: primary image's URL, or first image when none is primary. Null when the product has no images. */
   imageUrl: string | null;
+  /** Full image list, ordered by sortOrder then createdAt. */
+  images: ProductImageResponse[];
   /** Owning finance category, drives nutrition display gating. */
   categoryId: string | null;
   categoryName: string | null;
