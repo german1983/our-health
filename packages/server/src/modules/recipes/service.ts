@@ -31,6 +31,8 @@ type RecipeWithRelations = {
   id: string;
   name: string;
   description: string | null;
+  instructions: string | null;
+  externalUrl: string | null;
   servings: number;
   servingUnit: string | null;
   servingWeightGrams: number | null;
@@ -125,6 +127,8 @@ export async function createRecipe(
         householdId,
         name: input.name,
         description: input.description,
+        instructions: input.instructions,
+        externalUrl: input.externalUrl,
         servings: input.servings,
         servingUnit: input.servingUnit,
         servingWeightGrams: input.servingWeightGrams,
@@ -370,6 +374,8 @@ function formatRecipe(
     id: recipe.id,
     name: recipe.name,
     description: recipe.description,
+    instructions: recipe.instructions,
+    externalUrl: recipe.externalUrl,
     servings: recipe.servings,
     servingUnit: recipe.servingUnit,
     servingWeightGrams: recipe.servingWeightGrams,

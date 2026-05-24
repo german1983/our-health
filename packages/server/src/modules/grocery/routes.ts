@@ -2,6 +2,8 @@ import { Router } from 'express';
 import {
   createProductSchema,
   updateProductSchema,
+  createProductImageSchema,
+  updateProductImageSchema,
   createProductPresentationSchema,
   updateProductPresentationSchema,
   createStoreSchema,
@@ -116,6 +118,51 @@ router.delete(
   async (req, res, next) => {
     try {
       await groceryService.deleteProductPresentation(req.params.id);
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Product images
+router.post(
+  '/products/:id/images',
+  authenticate,
+  requireHousehold,
+  validate(createProductImageSchema),
+  async (req, res, next) => {
+    try {
+      const image = await groceryService.addProductImage(req.params.id, req.body);
+      res.status(201).json(image);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/products/images/:id',
+  authenticate,
+  requireHousehold,
+  validate(updateProductImageSchema),
+  async (req, res, next) => {
+    try {
+      const image = await groceryService.updateProductImage(req.params.id, req.body);
+      res.json(image);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/products/images/:id',
+  authenticate,
+  requireHousehold,
+  async (req, res, next) => {
+    try {
+      await groceryService.deleteProductImage(req.params.id);
       res.status(204).end();
     } catch (err) {
       next(err);

@@ -12,12 +12,16 @@ export const recipeIngredientSchema = z.object({
 export const createRecipeSchema = z.object({
   name: z.string().min(1, 'Recipe name is required').max(200),
   description: z.string().max(2000).optional(),
+  /** Multi-paragraph cooking steps. */
+  instructions: z.string().max(20000).optional(),
   servings: z.number().int().positive().default(1),
   servingUnit: z.string().max(50).optional(),
   servingWeightGrams: z.number().positive().optional(),
   prepTime: z.number().int().min(0).optional(),
   cookTime: z.number().int().min(0).optional(),
   imageUrl: z.string().url().optional(),
+  /** Link to an external page (blog, video, etc.) where this recipe lives. */
+  externalUrl: z.string().url().optional(),
   ingredients: z.array(recipeIngredientSchema).min(1, 'At least one ingredient is required'),
 });
 
@@ -43,6 +47,8 @@ export interface RecipeResponse {
   id: string;
   name: string;
   description: string | null;
+  instructions: string | null;
+  externalUrl: string | null;
   servings: number;
   servingUnit: string | null;
   servingWeightGrams: number | null;
