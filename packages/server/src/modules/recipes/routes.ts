@@ -24,6 +24,26 @@ router.get('/suggestions', authenticate, requireHousehold, async (req, res, next
   }
 });
 
+// Bulk availability map keyed by recipe id — used by the recipe list to badge
+// each row without N+1 queries.
+router.get('/availability', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const all = await recipeService.getAllRecipesAvailability(req.householdId!);
+    res.json(all);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/availability', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const result = await recipeService.getRecipeAvailability(req.params.id, req.householdId!);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', authenticate, requireHousehold, async (req, res, next) => {
   try {
     const recipe = await recipeService.getRecipe(req.params.id, req.householdId!);

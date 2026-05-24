@@ -6,10 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
 import type {
-  RecipeResponse,
-  RecipeDetailResponse,
-  RecipeSuggestionResponse,
   NutritionalFacts,
+  RecipeAvailabilityResponse,
+  RecipeDetailResponse,
+  RecipeResponse,
+  RecipeSuggestionResponse,
 } from '@personal-budget/shared';
 import {
   RecipeForm,
@@ -27,6 +28,15 @@ export function RecipesPage() {
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [labelRecipeId, setLabelRecipeId] = useState<string | null>(null);
   const [nutritionMode, setNutritionMode] = useNutritionMode();
+
+  const { data: availability } = useQuery({
+    queryKey: ['recipes', 'availability'],
+    // Bulk endpoint — one round-trip; cheap server-side via batched joins.
+    queryFn: () =>
+      api
+        .get<Record<string, RecipeAvailabilityResponse>>('/recipes/availability')
+        .then((r) => r.data),
+  });
 
   const { data: recipes } = useQuery({
     queryKey: ['recipes'],
@@ -144,17 +154,20 @@ export function RecipesPage() {
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-medium">{recipe.name}</h3>
-                  {nutritionMode === 'per100g'
-                    ? recipe.caloriesPer100g != null && (
-                        <Badge variant="outline" className="text-xs whitespace-nowrap">
-                          {recipe.caloriesPer100g} kcal/100g
-                        </Badge>
-                      )
-                    : recipe.caloriesPerServing != null && (
-                        <Badge variant="outline" className="text-xs whitespace-nowrap">
-                          {recipe.caloriesPerServing} kcal/{recipe.servingUnit ?? 'serving'}
-                        </Badge>
-                      )}
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    <AvailabilityBadge avail={availability?.[recipe.id]} />
+                    {nutritionMode === 'per100g'
+                      ? recipe.caloriesPer100g != null && (
+                          <Badge variant="outline" className="text-xs whitespace-nowrap">
+                            {recipe.caloriesPer100g} kcal/100g
+                          </Badge>
+                        )
+                      : recipe.caloriesPerServing != null && (
+                          <Badge variant="outline" className="text-xs whitespace-nowrap">
+                            {recipe.caloriesPerServing} kcal/{recipe.servingUnit ?? 'serving'}
+                          </Badge>
+                        )}
+                  </div>
                 </div>
                 {recipe.description && <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{recipe.description}</p>}
                 <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
@@ -247,14 +260,28 @@ export function RecipesPage() {
               </div>
 
               <div>
-                <h4 className="text-sm font-medium mb-2">Ingredients</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium">Ingredients</h4>
+                  <AvailabilityBadge avail={availability?.[recipeDetail.id]} />
+                </div>
                 <div className="space-y-1">
-                  {recipeDetail.ingredients.map((ing) => (
-                    <div key={ing.id} className="text-sm flex justify-between">
-                      <span>{ing.productName}</span>
-                      <span className="text-muted-foreground">{ing.quantity} {ing.unit}</span>
-                    </div>
-                  ))}
+                  {recipeDetail.ingredients.map((ing) => {
+                    const ingAvail = availability?.[recipeDetail.id]?.ingredients.find(
+                      (a) => a.ingredientId === ing.id,
+                    );
+                    return (
+                      <div
+                        key={ing.id}
+                        className="text-sm flex justify-between items-center gap-2"
+                      >
+                        <span className="min-w-0 truncate">{ing.productName}</span>
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <span>{ing.quantity} {ing.unit}</span>
+                          {ingAvail && <IngredientStatus avail={ingAvail} />}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -360,5 +387,61 @@ export function RecipesPage() {
         )}
       </Dialog>
     </div>
+  );
+}
+
+function AvailabilityBadge({ avail }: { avail: RecipeAvailabilityResponse | undefined }) {
+  if (!avail || avail.ingredients.length === 0) return null;
+  if (avail.canCook) {
+    return (
+      <Badge variant="success" className="text-xs whitespace-nowrap">
+        Ready to cook
+      </Badge>
+    );
+  }
+  const short = avail.ingredients.filter((i) => i.status === 'short').length;
+  const unknown = avail.ingredients.filter((i) => i.status === 'unknown').length;
+  if (short === 0 && unknown > 0) {
+    return (
+      <Badge variant="outline" className="text-xs whitespace-nowrap" title="Some ingredients use units we can't compare against storage.">
+        {unknown} unknown
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="warning" className="text-xs whitespace-nowrap">
+      {short} short
+      {unknown > 0 ? ` · ${unknown} unknown` : ''}
+    </Badge>
+  );
+}
+
+function IngredientStatus({
+  avail,
+}: {
+  avail: RecipeAvailabilityResponse['ingredients'][number];
+}) {
+  if (avail.status === 'sufficient') {
+    return (
+      <Badge variant="success" className="text-xs" title={`Have ${avail.have.toFixed(1)} ${avail.canonicalUnit}`}>
+        ✓
+      </Badge>
+    );
+  }
+  if (avail.status === 'short') {
+    return (
+      <Badge
+        variant="warning"
+        className="text-xs"
+        title={`Have ${avail.have.toFixed(1)} ${avail.canonicalUnit}, need ${avail.needed} ${avail.neededUnit}`}
+      >
+        Need {Number(avail.missing.toFixed(2))} {avail.canonicalUnit} more
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-xs" title="Storage entries use a unit we can't convert against the recipe's unit.">
+      ?
+    </Badge>
   );
 }
