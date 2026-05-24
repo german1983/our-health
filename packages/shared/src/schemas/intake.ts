@@ -19,11 +19,14 @@ export const createServingUnitSchema = z.object({
   productId: z.string().uuid(),
   name: z.string().min(1, 'Unit name is required').max(50),
   baseUnitEquivalent: z.number().positive('Base unit equivalent must be positive'),
+  /** Unit `baseUnitEquivalent` is expressed in. Null/omitted = product's base unit. */
+  targetUnit: z.string().nullable().optional(),
 });
 
 export const updateServingUnitSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   baseUnitEquivalent: z.number().positive().optional(),
+  targetUnit: z.string().nullable().optional(),
 });
 
 export type CreateServingUnitInput = z.infer<typeof createServingUnitSchema>;
@@ -88,6 +91,8 @@ export interface ServingUnitResponse {
   productId: string;
   name: string;
   baseUnitEquivalent: number;
+  /** Null means the product's nutrition_base_unit. */
+  targetUnit: string | null;
 }
 
 export interface IntakeEntryResponse {

@@ -120,6 +120,13 @@
       "when": 1779800000000,
       "tag": "0016_household_serving_units",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779900000000,
+      "tag": "0017_serving_unit_target",
+      "breakpoints": true
     }
   ]
 }

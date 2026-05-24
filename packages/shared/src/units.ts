@@ -88,3 +88,140 @@ export function getOtherFamilyUnits(unitCode: string): UnitDefinition[] {
   if (!unit) return [];
   return Object.values(UNITS).filter((u) => u.family !== unit.family);
 }
+
+// ==================== Product-aware conversion ====================
+
+/**
+ * A per-product custom equivalence: "1 [name] = baseUnitEquivalent of
+ * targetUnit." When targetUnit is null we treat it as the product's base
+ * unit (preserves the original "1 slice = 21 g on a g-base product" pattern).
+ *
+ * Custom rows whose name/target straddle two unit families act as bridges
+ * that let `productAwareConvert` cross from mass to volume to count for a
+ * specific product (e.g., density: name='g', equivalent=1, target='ml').
+ */
+export interface ProductCustomUnit {
+  name: string;
+  baseUnitEquivalent: number;
+  targetUnit?: string | null;
+}
+
+/** Convert within the same physical family; returns null otherwise. */
+function trySameFamilyConvert(qty: number, fromUnit: string, toUnit: string): number | null {
+  if (fromUnit === toUnit) return qty;
+  const f = UNITS[fromUnit];
+  const t = UNITS[toUnit];
+  if (!f || !t) return null;
+  if (f.family !== t.family) return null;
+  try {
+    return convertUnit(qty, fromUnit, toUnit);
+  } catch {
+    return null;
+  }
+}
+
+/** Try one custom edge as a bridge from `from` to `to`. Returns null on miss. */
+function tryBridge(
+  qty: number,
+  from: string,
+  to: string,
+  c: ProductCustomUnit,
+  baseUnit: string,
+): number | null {
+  const target = c.targetUnit ?? baseUnit;
+  // Forward: from → c.name (same-family) → multiply by equivalent to land in target → to (same-family)
+  const a = trySameFamilyConvert(qty, from, c.name);
+  if (a != null) {
+    const inTarget = a * c.baseUnitEquivalent;
+    const final = trySameFamilyConvert(inTarget, target, to);
+    if (final != null) return final;
+  }
+  // Reverse: from → target (same-family) → divide by equivalent to land in c.name → to (same-family)
+  const a2 = trySameFamilyConvert(qty, from, target);
+  if (a2 != null && c.baseUnitEquivalent !== 0) {
+    const inCustom = a2 / c.baseUnitEquivalent;
+    const final = trySameFamilyConvert(inCustom, c.name, to);
+    if (final != null) return final;
+  }
+  return null;
+}
+
+/**
+ * Convert `qty` from `fromUnit` to `toUnit` for a specific product. Tries
+ * (in order): identity, same-family physical, single-hop via a custom unit,
+ * two-hop via chained custom units. Returns null when no path is found.
+ *
+ * Two-hop covers the common "1 slice = 21 g" + "1 g = 1 ml" → asking for
+ * slices in ml, which needs to chain through grams.
+ */
+export function productAwareConvert(
+  qty: number,
+  fromUnit: string,
+  toUnit: string,
+  opts: { baseUnit: string; customUnits?: ProductCustomUnit[] },
+): number | null {
+  const direct = trySameFamilyConvert(qty, fromUnit, toUnit);
+  if (direct != null) return direct;
+
+  const customs = opts.customUnits ?? [];
+  const baseUnit = opts.baseUnit;
+
+  // Single-hop: try each custom edge.
+  for (const c of customs) {
+    const result = tryBridge(qty, fromUnit, toUnit, c, baseUnit);
+    if (result != null) return result;
+  }
+
+  // Two-hop: chain through a first custom edge, then bridge the rest.
+  for (const c1 of customs) {
+    const target1 = c1.targetUnit ?? baseUnit;
+    // Forward through c1: from → c1.name → target1.
+    const a = trySameFamilyConvert(qty, fromUnit, c1.name);
+    if (a != null) {
+      const inTarget1 = a * c1.baseUnitEquivalent;
+      for (const c2 of customs) {
+        if (c2 === c1) continue;
+        const r = tryBridge(inTarget1, target1, toUnit, c2, baseUnit);
+        if (r != null) return r;
+      }
+    }
+    // Reverse through c1: from → target1 → c1.name.
+    if (c1.baseUnitEquivalent === 0) continue;
+    const a2 = trySameFamilyConvert(qty, fromUnit, target1);
+    if (a2 != null) {
+      const inC1 = a2 / c1.baseUnitEquivalent;
+      for (const c2 of customs) {
+        if (c2 === c1) continue;
+        const r = tryBridge(inC1, c1.name, toUnit, c2, baseUnit);
+        if (r != null) return r;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Which standard unit families are reachable from `baseUnit` given the
+ * product's customs? Used by the UI to decide which families to expose
+ * in pickers (e.g., expose volume units when the product has a density-like
+ * row that bridges mass ↔ volume).
+ */
+export function reachableFamilies(
+  baseUnit: string,
+  customUnits: ProductCustomUnit[] = [],
+): Set<UnitFamily> {
+  const reachable = new Set<UnitFamily>();
+  const base = UNITS[baseUnit];
+  if (base) reachable.add(base.family);
+
+  // Probe each pair (base → every family) and see if a path exists.
+  for (const fam of UNIT_FAMILIES) {
+    if (reachable.has(fam)) continue;
+    const probeTarget = fam === 'MASS' ? 'g' : fam === 'VOLUME' ? 'ml' : 'unit';
+    if (productAwareConvert(1, baseUnit, probeTarget, { baseUnit, customUnits }) != null) {
+      reachable.add(fam);
+    }
+  }
+  return reachable;
+}

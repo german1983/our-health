@@ -9,7 +9,13 @@ import {
   storageSpaces,
 } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
-import { areUnitsCompatible, convertUnit, UNITS } from '@personal-budget/shared';
+import {
+  areUnitsCompatible,
+  convertUnit,
+  productAwareConvert,
+  UNITS,
+  type ProductCustomUnit,
+} from '@personal-budget/shared';
 import type {
   CreateRecipeInput,
   UpdateRecipeInput,
@@ -394,51 +400,15 @@ function per100gNutrition(
  * product's custom serving units when the physical units library can't
  * make the conversion alone. Returns null when no path exists.
  */
+/** Thin wrapper around productAwareConvert that keeps the call sites tidy. */
 function tryConvert(
   qty: number,
   fromUnit: string,
   toUnit: string,
   productBaseUnit: string,
-  customUnits: { name: string; baseUnitEquivalent: number }[],
+  customUnits: ProductCustomUnit[],
 ): number | null {
-  if (fromUnit === toUnit) return qty;
-  // Physical conversion within the same family.
-  if (UNITS[fromUnit] && UNITS[toUnit] && areUnitsCompatible(fromUnit, toUnit)) {
-    try {
-      return convertUnit(qty, fromUnit, toUnit);
-    } catch {
-      return null;
-    }
-  }
-  // Custom unit on the source side — expand into the product's base unit and
-  // then physical-convert into the target if needed.
-  const fromCustom = customUnits.find((u) => u.name === fromUnit);
-  if (fromCustom && UNITS[productBaseUnit]) {
-    const inBase = qty * fromCustom.baseUnitEquivalent;
-    if (productBaseUnit === toUnit) return inBase;
-    if (UNITS[toUnit] && areUnitsCompatible(productBaseUnit, toUnit)) {
-      try {
-        return convertUnit(inBase, productBaseUnit, toUnit);
-      } catch {
-        return null;
-      }
-    }
-  }
-  // Custom unit on the target side — convert source to product base, then
-  // divide by the custom unit's equivalent.
-  const toCustom = customUnits.find((u) => u.name === toUnit);
-  if (toCustom && UNITS[productBaseUnit]) {
-    if (fromUnit === productBaseUnit) return qty / toCustom.baseUnitEquivalent;
-    if (UNITS[fromUnit] && areUnitsCompatible(fromUnit, productBaseUnit)) {
-      try {
-        const inBase = convertUnit(qty, fromUnit, productBaseUnit);
-        return inBase / toCustom.baseUnitEquivalent;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
+  return productAwareConvert(qty, fromUnit, toUnit, { baseUnit: productBaseUnit, customUnits });
 }
 
 export async function getRecipeAvailability(
@@ -479,6 +449,7 @@ export async function getRecipeAvailability(
       productId: productServingUnits.productId,
       name: productServingUnits.name,
       baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+      targetUnit: productServingUnits.targetUnit,
     })
     .from(productServingUnits)
     .where(inArray(productServingUnits.productId, productIds));
@@ -490,7 +461,7 @@ export async function getRecipeAvailability(
     else storageByProduct.set(row.productId, [{ quantity: row.quantity, unit: row.unit }]);
   }
 
-  const customByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  const customByProduct = new Map<string, ProductCustomUnit[]>();
   for (const row of servingRows) {
     const list = customByProduct.get(row.productId);
     if (list) list.push({ name: row.name, baseUnitEquivalent: row.baseUnitEquivalent });
@@ -585,6 +556,7 @@ export async function getAllRecipesAvailability(
       productId: productServingUnits.productId,
       name: productServingUnits.name,
       baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+      targetUnit: productServingUnits.targetUnit,
     })
     .from(productServingUnits)
     .where(inArray(productServingUnits.productId, allProductIds));
@@ -595,7 +567,7 @@ export async function getAllRecipesAvailability(
     if (list) list.push({ quantity: row.quantity, unit: row.unit });
     else storageByProduct.set(row.productId, [{ quantity: row.quantity, unit: row.unit }]);
   }
-  const customByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  const customByProduct = new Map<string, ProductCustomUnit[]>();
   for (const row of servingRows) {
     const list = customByProduct.get(row.productId);
     if (list) list.push({ name: row.name, baseUnitEquivalent: row.baseUnitEquivalent });

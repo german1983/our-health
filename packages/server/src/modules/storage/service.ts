@@ -7,7 +7,13 @@ import {
   storageItems,
 } from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
-import { areUnitsCompatible, convertUnit, UNITS } from '@personal-budget/shared';
+import {
+  areUnitsCompatible,
+  convertUnit,
+  productAwareConvert,
+  UNITS,
+  type ProductCustomUnit,
+} from '@personal-budget/shared';
 import type {
   CreateStorageSpaceInput,
   UpdateStorageSpaceInput,
@@ -263,11 +269,12 @@ export async function getInventoryByProduct(householdId: string): Promise<Invent
       productId: productServingUnits.productId,
       name: productServingUnits.name,
       baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+      targetUnit: productServingUnits.targetUnit,
     })
     .from(productServingUnits)
     .where(inArray(productServingUnits.productId, productIds));
 
-  const servingUnitsByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  const servingUnitsByProduct = new Map<string, ProductCustomUnit[]>();
   for (const su of servingUnits) {
     const list = servingUnitsByProduct.get(su.productId);
     if (list) list.push(su);
@@ -298,9 +305,9 @@ export async function getInventoryByProduct(householdId: string): Promise<Invent
     }
     acc.lotCount += 1;
 
-    // Try the physical conversion first. If the row's unit is one of our
-    // known unit codes, it belongs to mass/volume/count and we can collapse
-    // it into the family's canonical unit.
+    const customs = servingUnitsByProduct.get(row.productId) ?? [];
+
+    // Standard physical unit — collapse it into the family's canonical unit.
     if (UNITS[row.unit]) {
       const family = familyOf(row.unit);
       const canonical = CANONICAL_UNIT[family];
@@ -312,25 +319,24 @@ export async function getInventoryByProduct(householdId: string): Promise<Invent
       continue;
     }
 
-    // Custom serving unit (e.g. "slice"): if defined, expand into the
-    // product's nutrition base unit so it stacks with the physical totals
-    // for that family.
-    const custom = servingUnitsByProduct
-      .get(row.productId)
-      ?.find((u) => u.name === row.unit);
-    if (custom && UNITS[acc.productBaseUnit]) {
-      const family = familyOf(acc.productBaseUnit);
-      const canonical = CANONICAL_UNIT[family];
-      const converted = convertUnit(
-        row.quantity * custom.baseUnitEquivalent,
-        acc.productBaseUnit,
-        canonical,
-      );
-      const key = `phys:${family}`;
-      const existing = acc.buckets.get(key);
-      if (existing) existing.quantity += converted;
-      else acc.buckets.set(key, { family, quantity: converted, unit: canonical });
-      continue;
+    // Custom unit (e.g. "slice"). Use productAwareConvert to land it in the
+    // base unit's family — possibly traversing a chain of customs (e.g. a
+    // density edge to flip mass→volume).
+    if (UNITS[acc.productBaseUnit]) {
+      const inBase = productAwareConvert(row.quantity, row.unit, acc.productBaseUnit, {
+        baseUnit: acc.productBaseUnit,
+        customUnits: customs,
+      });
+      if (inBase != null) {
+        const family = familyOf(acc.productBaseUnit);
+        const canonical = CANONICAL_UNIT[family];
+        const converted = convertUnit(inBase, acc.productBaseUnit, canonical);
+        const key = `phys:${family}`;
+        const existing = acc.buckets.get(key);
+        if (existing) existing.quantity += converted;
+        else acc.buckets.set(key, { family, quantity: converted, unit: canonical });
+        continue;
+      }
     }
 
     // Anything left over: stash under the raw unit name so the user at least

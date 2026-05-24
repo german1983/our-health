@@ -6,12 +6,13 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
-import { UNITS } from '@personal-budget/shared';
+import { UNITS, productAwareConvert } from '@personal-budget/shared';
 import type {
   BrandResponse,
   DailyLogResponse,
   IntakeEntryResponse,
   MealSlot,
+  ProductCustomUnit,
   ProductDetailResponse,
   ProductResponse,
   RecipeResponse,
@@ -38,14 +39,25 @@ function encodeFromEntry(entry: IntakeEntryResponse): UnitChoice {
 }
 
 /**
- * Standard units in the same family as `baseUnit`, excluding the base itself
- * (the base appears as the default option). E.g., baseUnit='g' → mg, kg, oz, lb.
+ * Standard units the picker should offer for a product. Always includes the
+ * same-family units of `baseUnit` (minus the base itself). When the product
+ * has custom edges that bridge families (e.g. "1 g = 1 ml" for water), units
+ * from those reachable families are included too — they're convertible via
+ * the engine, so hiding them would be unhelpful.
  */
-function otherFamilyUnits(baseUnit: string): { code: string; name: string }[] {
+function reachableUnitsForProduct(
+  baseUnit: string,
+  customs: ProductCustomUnit[],
+): { code: string; name: string }[] {
   const base = UNITS[baseUnit];
   if (!base) return [];
   return Object.values(UNITS)
-    .filter((u) => u.family === base.family && u.code !== baseUnit)
+    .filter((u) => {
+      if (u.code === baseUnit) return false;
+      if (u.family === base.family) return true;
+      // Cross-family: only include when the engine can reach this unit.
+      return productAwareConvert(1, baseUnit, u.code, { baseUnit, customUnits: customs }) != null;
+    })
     .map((u) => ({ code: u.code, name: u.name }));
 }
 
@@ -589,9 +601,9 @@ export function IntakePage() {
                         </option>
                       ))}
                     </optgroup>
-                    {otherFamilyUnits(selectedProductBaseUnit).length > 0 && (
+                    {reachableUnitsForProduct(selectedProductBaseUnit, servingUnits ?? []).length > 0 && (
                       <optgroup label="Other units">
-                        {otherFamilyUnits(selectedProductBaseUnit).map((u) => (
+                        {reachableUnitsForProduct(selectedProductBaseUnit, servingUnits ?? []).map((u) => (
                           <option key={u.code} value={`phys:${u.code}`}>
                             {u.code} ({u.name})
                           </option>
@@ -1039,9 +1051,9 @@ export function IntakePage() {
                         </option>
                       ))}
                     </optgroup>
-                    {otherFamilyUnits(editingProductBaseUnit).length > 0 && (
+                    {reachableUnitsForProduct(editingProductBaseUnit, editServingUnits ?? []).length > 0 && (
                       <optgroup label="Other units">
-                        {otherFamilyUnits(editingProductBaseUnit).map((u) => (
+                        {reachableUnitsForProduct(editingProductBaseUnit, editServingUnits ?? []).map((u) => (
                           <option key={u.code} value={`phys:${u.code}`}>
                             {u.code} ({u.name})
                           </option>
