@@ -88,6 +88,7 @@ export {
   type UpdateStorageItemInput,
   type StorageSpaceResponse,
   type StorageItemResponse,
+  type InventoryByProductEntry,
 } from './schemas/storage.js';
 
 // Recipes
@@ -102,6 +103,8 @@ export {
   type RecipeResponse,
   type RecipeDetailResponse,
   type RecipeSuggestionResponse,
+  type RecipeAvailabilityResponse,
+  type RecipeIngredientAvailability,
 } from './schemas/recipes.js';
 
 // Finance

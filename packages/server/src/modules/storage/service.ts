@@ -1,12 +1,19 @@
 import { and, eq, inArray, asc, desc } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
-import { storageSpaces, storageItems } from '../../db/schema.js';
+import {
+  productServingUnits,
+  products,
+  storageSpaces,
+  storageItems,
+} from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { areUnitsCompatible, convertUnit, UNITS } from '@personal-budget/shared';
 import type {
   CreateStorageSpaceInput,
   UpdateStorageSpaceInput,
   CreateStorageItemInput,
   UpdateStorageItemInput,
+  InventoryByProductEntry,
   StorageSpaceResponse,
   StorageItemResponse,
 } from '@personal-budget/shared';
@@ -199,4 +206,152 @@ function formatItem(item: ItemWithRelations): StorageItemResponse {
     expiryDate: item.expiryDate?.toISOString() ?? null,
     addedBy: item.addedBy.name,
   };
+}
+
+// ==================== Aggregation ====================
+
+type AggregationFamily = 'mass' | 'volume' | 'count' | 'unknown';
+
+/** Map a unit code to a normalized "family" tag for grouping in the aggregate. */
+function familyOf(unit: string): AggregationFamily {
+  const def = UNITS[unit];
+  if (!def) return 'unknown';
+  if (def.family === 'MASS') return 'mass';
+  if (def.family === 'VOLUME') return 'volume';
+  return 'count';
+}
+
+/** Canonical unit per family — what the rolled-up total is reported in. */
+const CANONICAL_UNIT: Record<AggregationFamily, string> = {
+  mass: 'g',
+  volume: 'ml',
+  count: 'unit',
+  unknown: 'unit',
+};
+
+/**
+ * Sum every household storage row per product, grouped by unit family.
+ * Rolls a 600 g + 250 g bag of Nutella into a single 850 g entry; keeps
+ * a 1 jar entry separate from the mass total because they're different
+ * dimensions. Caller (recipe availability or storage UI) decides how to
+ * present per-family totals.
+ */
+export async function getInventoryByProduct(householdId: string): Promise<InventoryByProductEntry[]> {
+  // One round-trip pulling every storage row that belongs to the household
+  // along with the product's display name and base unit.
+  const rows = await db
+    .select({
+      productId: storageItems.productId,
+      productName: products.name,
+      productBaseUnit: products.nutritionBaseUnit,
+      quantity: storageItems.quantity,
+      unit: storageItems.unit,
+    })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .innerJoin(products, eq(products.id, storageItems.productId))
+    .where(eq(storageSpaces.householdId, householdId));
+
+  if (rows.length === 0) return [];
+
+  // Pull the custom serving units for the products we just saw — they widen
+  // the convertible set (e.g. "1 slice = 21 g" lets a 'slice'-typed storage
+  // row roll up into the mass total).
+  const productIds = Array.from(new Set(rows.map((r) => r.productId)));
+  const servingUnits = await db
+    .select({
+      productId: productServingUnits.productId,
+      name: productServingUnits.name,
+      baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+    })
+    .from(productServingUnits)
+    .where(inArray(productServingUnits.productId, productIds));
+
+  const servingUnitsByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  for (const su of servingUnits) {
+    const list = servingUnitsByProduct.get(su.productId);
+    if (list) list.push(su);
+    else servingUnitsByProduct.set(su.productId, [su]);
+  }
+
+  // Bucket rows by product, then by family. Each bucket sums in the family's
+  // canonical unit so a 1 kg + 500 g rollup produces 1500 g.
+  type Bucket = { family: AggregationFamily; quantity: number; unit: string };
+  type Acc = {
+    productName: string;
+    productBaseUnit: string;
+    lotCount: number;
+    buckets: Map<string, Bucket>;
+  };
+  const byProduct = new Map<string, Acc>();
+
+  for (const row of rows) {
+    let acc = byProduct.get(row.productId);
+    if (!acc) {
+      acc = {
+        productName: row.productName,
+        productBaseUnit: row.productBaseUnit,
+        lotCount: 0,
+        buckets: new Map(),
+      };
+      byProduct.set(row.productId, acc);
+    }
+    acc.lotCount += 1;
+
+    // Try the physical conversion first. If the row's unit is one of our
+    // known unit codes, it belongs to mass/volume/count and we can collapse
+    // it into the family's canonical unit.
+    if (UNITS[row.unit]) {
+      const family = familyOf(row.unit);
+      const canonical = CANONICAL_UNIT[family];
+      const converted = convertUnit(row.quantity, row.unit, canonical);
+      const key = `phys:${family}`;
+      const existing = acc.buckets.get(key);
+      if (existing) existing.quantity += converted;
+      else acc.buckets.set(key, { family, quantity: converted, unit: canonical });
+      continue;
+    }
+
+    // Custom serving unit (e.g. "slice"): if defined, expand into the
+    // product's nutrition base unit so it stacks with the physical totals
+    // for that family.
+    const custom = servingUnitsByProduct
+      .get(row.productId)
+      ?.find((u) => u.name === row.unit);
+    if (custom && UNITS[acc.productBaseUnit]) {
+      const family = familyOf(acc.productBaseUnit);
+      const canonical = CANONICAL_UNIT[family];
+      const converted = convertUnit(
+        row.quantity * custom.baseUnitEquivalent,
+        acc.productBaseUnit,
+        canonical,
+      );
+      const key = `phys:${family}`;
+      const existing = acc.buckets.get(key);
+      if (existing) existing.quantity += converted;
+      else acc.buckets.set(key, { family, quantity: converted, unit: canonical });
+      continue;
+    }
+
+    // Anything left over: stash under the raw unit name so the user at least
+    // sees it. They can convert by adding a custom unit definition.
+    const key = `raw:${row.unit}`;
+    const existing = acc.buckets.get(key);
+    if (existing) existing.quantity += row.quantity;
+    else acc.buckets.set(key, { family: 'unknown', quantity: row.quantity, unit: row.unit });
+  }
+
+  const result: InventoryByProductEntry[] = [];
+  for (const [productId, acc] of byProduct.entries()) {
+    result.push({
+      productId,
+      productName: acc.productName,
+      lotCount: acc.lotCount,
+      totals: Array.from(acc.buckets.values()).sort((a, b) =>
+        a.family === b.family ? a.unit.localeCompare(b.unit) : a.family.localeCompare(b.family),
+      ),
+    });
+  }
+  result.sort((a, b) => a.productName.localeCompare(b.productName));
+  return result;
 }

@@ -113,4 +113,14 @@ router.get('/inventory', authenticate, requireHousehold, async (req, res, next) 
   }
 });
 
+// Aggregated inventory — per product, summed across lots & unit families.
+router.get('/inventory-by-product', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const inventory = await storageService.getInventoryByProduct(req.householdId!);
+    res.json(inventory);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

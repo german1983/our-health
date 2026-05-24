@@ -9,7 +9,13 @@ import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui
 import api from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { UNITS } from '@personal-budget/shared';
-import type { StorageSpaceResponse, StorageItemResponse, ProductResponse, SpaceType } from '@personal-budget/shared';
+import type {
+  InventoryByProductEntry,
+  ProductResponse,
+  SpaceType,
+  StorageItemResponse,
+  StorageSpaceResponse,
+} from '@personal-budget/shared';
 
 const ALL_UNITS = Object.values(UNITS);
 
@@ -26,6 +32,7 @@ export function StoragePage() {
   const [showAddSpace, setShowAddSpace] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'by-lot' | 'by-product'>('by-lot');
 
   // Space form
   const [spaceName, setSpaceName] = useState('');
@@ -50,6 +57,14 @@ export function StoragePage() {
       selectedSpaceId
         ? api.get<StorageItemResponse[]>(`/storage/spaces/${selectedSpaceId}/items`).then((r) => r.data)
         : api.get<StorageItemResponse[]>('/storage/inventory').then((r) => r.data),
+  });
+
+  // Per-product aggregate — only relevant when viewing across all spaces.
+  const { data: inventoryByProduct } = useQuery({
+    queryKey: ['storage', 'inventory-by-product'],
+    queryFn: () =>
+      api.get<InventoryByProductEntry[]>('/storage/inventory-by-product').then((r) => r.data),
+    enabled: viewMode === 'by-product' && selectedSpaceId === null,
   });
 
   const { data: productResults } = useQuery({
@@ -117,7 +132,7 @@ export function StoragePage() {
       </div>
 
       {/* Space Tabs */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         <Button
           size="sm"
           variant={selectedSpaceId === null ? 'default' : 'outline'}
@@ -136,12 +151,64 @@ export function StoragePage() {
             <Badge variant="secondary" className="ml-2">{space.itemCount}</Badge>
           </Button>
         ))}
+        {/* Aggregation toggle only makes sense across all spaces — per-space
+            views always show lots so you can see what's actually in the fridge. */}
+        {selectedSpaceId === null && (
+          <div className="ml-auto flex items-center gap-1 text-xs">
+            <span className="text-muted-foreground mr-1">View:</span>
+            <Button
+              size="sm"
+              variant={viewMode === 'by-lot' ? 'default' : 'outline'}
+              onClick={() => setViewMode('by-lot')}
+            >
+              By lot
+            </Button>
+            <Button
+              size="sm"
+              variant={viewMode === 'by-product' ? 'default' : 'outline'}
+              onClick={() => setViewMode('by-product')}
+            >
+              By product
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Items List */}
       <Card>
         <CardContent className="p-4">
-          {items && items.length > 0 ? (
+          {viewMode === 'by-product' && selectedSpaceId === null ? (
+            inventoryByProduct && inventoryByProduct.length > 0 ? (
+              <div className="space-y-2">
+                {inventoryByProduct.map((entry) => (
+                  <div
+                    key={entry.productId}
+                    className="flex items-center justify-between py-2 border-b border-border last:border-0"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm">{entry.productName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {entry.totals.map((t, i) => (
+                          <span key={`${t.family}-${t.unit}`}>
+                            {i > 0 && ' + '}
+                            <span className="font-mono">
+                              {Number(t.quantity.toFixed(2))} {t.unit}
+                            </span>
+                          </span>
+                        ))}
+                        {' · '}
+                        <span>
+                          {entry.lotCount} {entry.lotCount === 1 ? 'lot' : 'lots'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">No items in storage.</p>
+            )
+          ) : items && items.length > 0 ? (
             <div className="space-y-2">
               {items.map((item) => {
                 const daysUntilExpiry = item.expiryDate ? getDaysUntilExpiry(item.expiryDate) : null;

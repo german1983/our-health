@@ -1,12 +1,21 @@
 import { and, eq, gt, desc, inArray } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
-import { recipes, recipeIngredients, storageItems, storageSpaces } from '../../db/schema.js';
+import {
+  products,
+  productServingUnits,
+  recipes,
+  recipeIngredients,
+  storageItems,
+  storageSpaces,
+} from '../../db/schema.js';
 import { NotFoundError } from '../../lib/errors.js';
-import { areUnitsCompatible, convertUnit } from '@personal-budget/shared';
+import { areUnitsCompatible, convertUnit, UNITS } from '@personal-budget/shared';
 import type {
   CreateRecipeInput,
   UpdateRecipeInput,
   NutritionalFacts,
+  RecipeAvailabilityResponse,
+  RecipeIngredientAvailability,
   RecipeResponse,
   RecipeDetailResponse,
   RecipeSuggestionResponse,
@@ -376,4 +385,267 @@ function per100gNutrition(
 ): NutritionalFacts | null {
   if (!totalWeightGrams || totalWeightGrams <= 0) return null;
   return divideNutrition(total, totalWeightGrams / 100);
+}
+
+// ==================== Availability ====================
+
+/**
+ * Try to express `qty` of `fromUnit` in `toUnit`, optionally using the
+ * product's custom serving units when the physical units library can't
+ * make the conversion alone. Returns null when no path exists.
+ */
+function tryConvert(
+  qty: number,
+  fromUnit: string,
+  toUnit: string,
+  productBaseUnit: string,
+  customUnits: { name: string; baseUnitEquivalent: number }[],
+): number | null {
+  if (fromUnit === toUnit) return qty;
+  // Physical conversion within the same family.
+  if (UNITS[fromUnit] && UNITS[toUnit] && areUnitsCompatible(fromUnit, toUnit)) {
+    try {
+      return convertUnit(qty, fromUnit, toUnit);
+    } catch {
+      return null;
+    }
+  }
+  // Custom unit on the source side — expand into the product's base unit and
+  // then physical-convert into the target if needed.
+  const fromCustom = customUnits.find((u) => u.name === fromUnit);
+  if (fromCustom && UNITS[productBaseUnit]) {
+    const inBase = qty * fromCustom.baseUnitEquivalent;
+    if (productBaseUnit === toUnit) return inBase;
+    if (UNITS[toUnit] && areUnitsCompatible(productBaseUnit, toUnit)) {
+      try {
+        return convertUnit(inBase, productBaseUnit, toUnit);
+      } catch {
+        return null;
+      }
+    }
+  }
+  // Custom unit on the target side — convert source to product base, then
+  // divide by the custom unit's equivalent.
+  const toCustom = customUnits.find((u) => u.name === toUnit);
+  if (toCustom && UNITS[productBaseUnit]) {
+    if (fromUnit === productBaseUnit) return qty / toCustom.baseUnitEquivalent;
+    if (UNITS[fromUnit] && areUnitsCompatible(fromUnit, productBaseUnit)) {
+      try {
+        const inBase = convertUnit(qty, fromUnit, productBaseUnit);
+        return inBase / toCustom.baseUnitEquivalent;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+export async function getRecipeAvailability(
+  recipeId: string,
+  householdId: string,
+): Promise<RecipeAvailabilityResponse> {
+  const recipe = await db.query.recipes.findFirst({
+    where: and(eq(recipes.id, recipeId), eq(recipes.householdId, householdId)),
+    with: {
+      ingredients: {
+        with: { product: true },
+      },
+    },
+  });
+  if (!recipe) throw new NotFoundError('Recipe');
+
+  const productIds = recipe.ingredients.map((i) => i.productId);
+  if (productIds.length === 0) {
+    return { recipeId, canCook: true, matchScore: 1, ingredients: [] };
+  }
+
+  // One query for all storage rows of any ingredient of this recipe.
+  const storageRows = await db
+    .select({
+      productId: storageItems.productId,
+      quantity: storageItems.quantity,
+      unit: storageItems.unit,
+    })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .where(
+      and(eq(storageSpaces.householdId, householdId), inArray(storageItems.productId, productIds)),
+    );
+
+  // One query for all custom serving units across these products.
+  const servingRows = await db
+    .select({
+      productId: productServingUnits.productId,
+      name: productServingUnits.name,
+      baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+    })
+    .from(productServingUnits)
+    .where(inArray(productServingUnits.productId, productIds));
+
+  const storageByProduct = new Map<string, { quantity: number; unit: string }[]>();
+  for (const row of storageRows) {
+    const list = storageByProduct.get(row.productId);
+    if (list) list.push({ quantity: row.quantity, unit: row.unit });
+    else storageByProduct.set(row.productId, [{ quantity: row.quantity, unit: row.unit }]);
+  }
+
+  const customByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  for (const row of servingRows) {
+    const list = customByProduct.get(row.productId);
+    if (list) list.push({ name: row.name, baseUnitEquivalent: row.baseUnitEquivalent });
+    else
+      customByProduct.set(row.productId, [
+        { name: row.name, baseUnitEquivalent: row.baseUnitEquivalent },
+      ]);
+  }
+
+  const out: RecipeIngredientAvailability[] = [];
+  let sufficientCount = 0;
+
+  for (const ing of recipe.ingredients) {
+    const baseUnit = ing.product?.nutritionBaseUnit ?? ing.unit;
+    const customUnits = customByProduct.get(ing.productId) ?? [];
+
+    // Canonical = the ingredient's unit if it's a known physical or custom unit;
+    // otherwise fall back to the recipe's stored unit.
+    const canonicalUnit = ing.unit;
+
+    let have = 0;
+    let unconvertible = 0;
+    for (const row of storageByProduct.get(ing.productId) ?? []) {
+      const converted = tryConvert(row.quantity, row.unit, canonicalUnit, baseUnit, customUnits);
+      if (converted == null) unconvertible++;
+      else have += converted;
+    }
+
+    // Any storage row we couldn't convert means we can't trust the compare.
+    const status: RecipeIngredientAvailability['status'] =
+      unconvertible > 0 && have < ing.quantity
+        ? 'unknown'
+        : have >= ing.quantity
+          ? 'sufficient'
+          : 'short';
+    if (status === 'sufficient') sufficientCount++;
+
+    out.push({
+      ingredientId: ing.id,
+      productId: ing.productId,
+      productName: ing.product?.name ?? '(unknown)',
+      needed: ing.quantity,
+      neededUnit: ing.unit,
+      have,
+      canonicalUnit,
+      unconvertible,
+      status,
+      missing: status === 'short' ? Math.max(0, ing.quantity - have) : 0,
+    });
+  }
+
+  return {
+    recipeId,
+    canCook: sufficientCount === recipe.ingredients.length,
+    matchScore: recipe.ingredients.length === 0 ? 1 : sufficientCount / recipe.ingredients.length,
+    ingredients: out,
+  };
+}
+
+/**
+ * Bulk version: availability for every recipe in the household, computed in
+ * one pass over storage + serving-units. Used by the recipe list to badge
+ * each row without N+1 queries.
+ */
+export async function getAllRecipesAvailability(
+  householdId: string,
+): Promise<Record<string, RecipeAvailabilityResponse>> {
+  const allRecipes = await db.query.recipes.findMany({
+    where: eq(recipes.householdId, householdId),
+    with: { ingredients: { with: { product: true } } },
+  });
+  if (allRecipes.length === 0) return {};
+
+  const allProductIds = Array.from(
+    new Set(allRecipes.flatMap((r) => r.ingredients.map((i) => i.productId))),
+  );
+
+  const storageRows = await db
+    .select({
+      productId: storageItems.productId,
+      quantity: storageItems.quantity,
+      unit: storageItems.unit,
+    })
+    .from(storageItems)
+    .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+    .where(
+      and(eq(storageSpaces.householdId, householdId), inArray(storageItems.productId, allProductIds)),
+    );
+
+  const servingRows = await db
+    .select({
+      productId: productServingUnits.productId,
+      name: productServingUnits.name,
+      baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+    })
+    .from(productServingUnits)
+    .where(inArray(productServingUnits.productId, allProductIds));
+
+  const storageByProduct = new Map<string, { quantity: number; unit: string }[]>();
+  for (const row of storageRows) {
+    const list = storageByProduct.get(row.productId);
+    if (list) list.push({ quantity: row.quantity, unit: row.unit });
+    else storageByProduct.set(row.productId, [{ quantity: row.quantity, unit: row.unit }]);
+  }
+  const customByProduct = new Map<string, { name: string; baseUnitEquivalent: number }[]>();
+  for (const row of servingRows) {
+    const list = customByProduct.get(row.productId);
+    if (list) list.push({ name: row.name, baseUnitEquivalent: row.baseUnitEquivalent });
+    else
+      customByProduct.set(row.productId, [
+        { name: row.name, baseUnitEquivalent: row.baseUnitEquivalent },
+      ]);
+  }
+
+  const out: Record<string, RecipeAvailabilityResponse> = {};
+  for (const recipe of allRecipes) {
+    const ingredients: RecipeIngredientAvailability[] = [];
+    let sufficientCount = 0;
+    for (const ing of recipe.ingredients) {
+      const baseUnit = ing.product?.nutritionBaseUnit ?? ing.unit;
+      const customUnits = customByProduct.get(ing.productId) ?? [];
+      const canonicalUnit = ing.unit;
+      let have = 0;
+      let unconvertible = 0;
+      for (const row of storageByProduct.get(ing.productId) ?? []) {
+        const converted = tryConvert(row.quantity, row.unit, canonicalUnit, baseUnit, customUnits);
+        if (converted == null) unconvertible++;
+        else have += converted;
+      }
+      const status: RecipeIngredientAvailability['status'] =
+        unconvertible > 0 && have < ing.quantity
+          ? 'unknown'
+          : have >= ing.quantity
+            ? 'sufficient'
+            : 'short';
+      if (status === 'sufficient') sufficientCount++;
+      ingredients.push({
+        ingredientId: ing.id,
+        productId: ing.productId,
+        productName: ing.product?.name ?? '(unknown)',
+        needed: ing.quantity,
+        neededUnit: ing.unit,
+        have,
+        canonicalUnit,
+        unconvertible,
+        status,
+        missing: status === 'short' ? Math.max(0, ing.quantity - have) : 0,
+      });
+    }
+    out[recipe.id] = {
+      recipeId: recipe.id,
+      canCook: sufficientCount === recipe.ingredients.length,
+      matchScore: recipe.ingredients.length === 0 ? 1 : sufficientCount / recipe.ingredients.length,
+      ingredients,
+    };
+  }
+  return out;
 }
