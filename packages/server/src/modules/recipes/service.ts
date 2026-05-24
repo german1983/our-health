@@ -247,6 +247,7 @@ function calculateTotalNutrition(
     calories: 0,
     fat: 0,
     saturatedFat: 0,
+    transFat: 0,
     carbs: 0,
     sugars: 0,
     fiber: 0,
@@ -274,6 +275,7 @@ function calculateTotalNutrition(
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0) * factor;
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0) * factor;
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0) * factor;
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0) * factor;
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0) * factor;
@@ -296,6 +298,7 @@ function divideNutrition(total: NutritionalFacts, servings: number): Nutritional
     calories: (total.calories ?? 0) / servings,
     fat: (total.fat ?? 0) / servings,
     saturatedFat: (total.saturatedFat ?? 0) / servings,
+    transFat: (total.transFat ?? 0) / servings,
     carbs: (total.carbs ?? 0) / servings,
     sugars: (total.sugars ?? 0) / servings,
     fiber: (total.fiber ?? 0) / servings,
@@ -316,6 +319,7 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
     calories: round(nf.calories),
     fat: round(nf.fat),
     saturatedFat: round(nf.saturatedFat),
+    transFat: round(nf.transFat),
     carbs: round(nf.carbs),
     sugars: round(nf.sugars),
     fiber: round(nf.fiber),

@@ -337,6 +337,7 @@ function calculateEntryNutrition(entry: EntryWithRelations): {
         calories: (nf.calories ?? 0) * factor,
         fat: (nf.fat ?? 0) * factor,
         saturatedFat: (nf.saturatedFat ?? 0) * factor,
+        transFat: (nf.transFat ?? 0) * factor,
         carbs: (nf.carbs ?? 0) * factor,
         sugars: (nf.sugars ?? 0) * factor,
         fiber: (nf.fiber ?? 0) * factor,
@@ -370,6 +371,7 @@ function calculateRecipeTotalNutrition(
     calories: 0,
     fat: 0,
     saturatedFat: 0,
+    transFat: 0,
     carbs: 0,
     sugars: 0,
     fiber: 0,
@@ -402,6 +404,7 @@ function calculateRecipeTotalNutrition(
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0) * factor;
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0) * factor;
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0) * factor;
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0) * factor;
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0) * factor;
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0) * factor;
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0) * factor;
@@ -423,6 +426,7 @@ function divideNutrition(nf: NutritionalFacts, divisor: number): NutritionalFact
     calories: (nf.calories ?? 0) / divisor,
     fat: (nf.fat ?? 0) / divisor,
     saturatedFat: (nf.saturatedFat ?? 0) / divisor,
+    transFat: (nf.transFat ?? 0) / divisor,
     carbs: (nf.carbs ?? 0) / divisor,
     sugars: (nf.sugars ?? 0) / divisor,
     fiber: (nf.fiber ?? 0) / divisor,
@@ -461,6 +465,7 @@ function sumNutrition(items: (NutritionalFacts | null)[]): NutritionalFacts {
     calories: 0,
     fat: 0,
     saturatedFat: 0,
+    transFat: 0,
     carbs: 0,
     sugars: 0,
     fiber: 0,
@@ -478,6 +483,7 @@ function sumNutrition(items: (NutritionalFacts | null)[]): NutritionalFacts {
     total.calories = (total.calories ?? 0) + (nf.calories ?? 0);
     total.fat = (total.fat ?? 0) + (nf.fat ?? 0);
     total.saturatedFat = (total.saturatedFat ?? 0) + (nf.saturatedFat ?? 0);
+    total.transFat = (total.transFat ?? 0) + (nf.transFat ?? 0);
     total.carbs = (total.carbs ?? 0) + (nf.carbs ?? 0);
     total.sugars = (total.sugars ?? 0) + (nf.sugars ?? 0);
     total.fiber = (total.fiber ?? 0) + (nf.fiber ?? 0);
@@ -499,6 +505,7 @@ function roundNutrition(nf: NutritionalFacts): NutritionalFacts {
     calories: round(nf.calories),
     fat: round(nf.fat),
     saturatedFat: round(nf.saturatedFat),
+    transFat: round(nf.transFat),
     carbs: round(nf.carbs),
     sugars: round(nf.sugars),
     fiber: round(nf.fiber),

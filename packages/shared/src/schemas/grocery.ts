@@ -5,6 +5,7 @@ export const nutritionalFactsSchema = z.object({
   calories: z.number().min(0).optional(),
   fat: z.number().min(0).optional(),
   saturatedFat: z.number().min(0).optional(),
+  transFat: z.number().min(0).optional(),
   carbs: z.number().min(0).optional(),
   sugars: z.number().min(0).optional(),
   fiber: z.number().min(0).optional(),

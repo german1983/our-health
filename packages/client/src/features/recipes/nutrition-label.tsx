@@ -26,6 +26,7 @@ function buildRows(nf: NutritionalFacts | null): { major: Row[]; vits: Row[] } {
     major: [
       { label: 'Total Fat', value: v.fat, unit: 'g', bold: true },
       { label: 'Saturated Fat', value: v.saturatedFat, unit: 'g', indent: true },
+      { label: 'Trans Fat', value: v.transFat, unit: 'g', indent: true },
       { label: 'Cholesterol', value: v.cholesterol, unit: 'mg', bold: true },
       { label: 'Sodium', value: v.sodium, unit: 'mg', bold: true },
       { label: 'Total Carbohydrate', value: v.carbs, unit: 'g', bold: true },

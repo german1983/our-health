@@ -11,6 +11,7 @@ interface OFFProduct {
     'energy-kcal_100g'?: number;
     fat_100g?: number;
     'saturated-fat_100g'?: number;
+    'trans-fat_100g'?: number;
     carbohydrates_100g?: number;
     sugars_100g?: number;
     fiber_100g?: number;
@@ -58,6 +59,7 @@ export async function fetchProductByBarcode(barcode: string): Promise<{
           calories: n['energy-kcal_100g'],
           fat: n.fat_100g,
           saturatedFat: n['saturated-fat_100g'],
+          transFat: n['trans-fat_100g'],
           carbs: n.carbohydrates_100g,
           sugars: n.sugars_100g,
           fiber: n.fiber_100g,
