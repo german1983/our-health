@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createRecipeSchema, updateRecipeSchema } from '@personal-budget/shared';
+import { createRecipeSchema, prepareRecipeSchema, updateRecipeSchema } from '@personal-budget/shared';
 import { validate } from '../../middleware/validate.js';
 import { authenticate, requireHousehold } from '../../middleware/auth.js';
 import * as recipeService from './service.js';
@@ -79,5 +79,27 @@ router.delete('/:id', authenticate, requireHousehold, async (req, res, next) => 
     next(err);
   }
 });
+
+// "I cooked this." Deducts the scaled ingredient requirements from household
+// storage and (optionally) saves the leftovers as a storage entry.
+router.post(
+  '/:id/prepare',
+  authenticate,
+  requireHousehold,
+  validate(prepareRecipeSchema),
+  async (req, res, next) => {
+    try {
+      const preparation = await recipeService.prepareRecipe({
+        recipeId: req.params.id,
+        householdId: req.householdId!,
+        userId: req.userId!,
+        input: req.body,
+      });
+      res.status(201).json(preparation);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

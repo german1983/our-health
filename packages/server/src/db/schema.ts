@@ -224,10 +224,42 @@ export const recipes = pgTable(
     externalUrl: text('external_url'),
     source: recipeSourceEnum('source').notNull().default('USER'),
     externalId: text('external_id'),
+    /**
+     * Companion product representing "leftovers of this recipe." Lazily set
+     * the first time a user prepares the recipe and chooses to store the
+     * result; subsequent preps reuse the same product so storage stacks.
+     */
+    resultProductId: uuid('result_product_id').references((): AnyPgColumn => products.id, {
+      onDelete: 'set null',
+    }),
     createdById: uuid('created_by_id').notNull().references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('recipes_household_id_idx').on(t.householdId)],
+);
+
+export const recipePreparations = pgTable(
+  'recipe_preparations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    recipeId: uuid('recipe_id').notNull().references(() => recipes.id, { onDelete: 'cascade' }),
+    householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+    preparedById: uuid('prepared_by_id').notNull().references(() => users.id),
+    /** Multiplier applied to every ingredient quantity (1 = recipe as written, 0.5 = half batch, 2 = double, ...). */
+    scale: doublePrecision('scale').notNull().default(1),
+    /** True when the user OK'd consuming despite a shortfall — record-keeping only. */
+    allowedShortage: boolean('allowed_shortage').notNull().default(false),
+    notes: text('notes'),
+    /** Storage row created for the leftovers (null when the user didn't save any). */
+    storedItemId: uuid('stored_item_id').references((): AnyPgColumn => storageItems.id, {
+      onDelete: 'set null',
+    }),
+    preparedAt: timestamp('prepared_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('recipe_preparations_recipe_idx').on(t.recipeId),
+    index('recipe_preparations_household_idx').on(t.householdId),
+  ],
 );
 
 export const recipeIngredients = pgTable(
@@ -614,13 +646,21 @@ export const storageItemsRelations = relations(storageItems, ({ one }) => ({
 export const recipesRelations = relations(recipes, ({ one, many }) => ({
   household: one(households, { fields: [recipes.householdId], references: [households.id] }),
   createdBy: one(users, { fields: [recipes.createdById], references: [users.id] }),
+  resultProduct: one(products, { fields: [recipes.resultProductId], references: [products.id] }),
   ingredients: many(recipeIngredients),
   intakeEntries: many(intakeEntries),
+  preparations: many(recipePreparations),
 }));
 
 export const recipeIngredientsRelations = relations(recipeIngredients, ({ one }) => ({
   recipe: one(recipes, { fields: [recipeIngredients.recipeId], references: [recipes.id] }),
   product: one(products, { fields: [recipeIngredients.productId], references: [products.id] }),
+}));
+
+export const recipePreparationsRelations = relations(recipePreparations, ({ one }) => ({
+  recipe: one(recipes, { fields: [recipePreparations.recipeId], references: [recipes.id] }),
+  preparedBy: one(users, { fields: [recipePreparations.preparedById], references: [users.id] }),
+  storedItem: one(storageItems, { fields: [recipePreparations.storedItemId], references: [storageItems.id] }),
 }));
 
 export const categoriesRelations = relations(categories, ({ one, many }) => ({
