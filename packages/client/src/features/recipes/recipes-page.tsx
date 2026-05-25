@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
 import type {
+  PrepareRecipeInput,
+  RecipePreparationResponse,
+  StorageSpaceResponse,
   NutritionalFacts,
   RecipeAvailabilityResponse,
   RecipeDetailResponse,
@@ -27,6 +32,7 @@ export function RecipesPage() {
   const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
   const [labelRecipeId, setLabelRecipeId] = useState<string | null>(null);
+  const [prepareRecipeId, setPrepareRecipeId] = useState<string | null>(null);
   const [nutritionMode, setNutritionMode] = useNutritionMode();
 
   const { data: availability } = useQuery({
@@ -49,7 +55,7 @@ export function RecipesPage() {
     enabled: tab === 'suggestions',
   });
 
-  const detailId = editingRecipeId ?? labelRecipeId ?? selectedRecipeId;
+  const detailId = editingRecipeId ?? labelRecipeId ?? prepareRecipeId ?? selectedRecipeId;
   const { data: recipeDetail } = useQuery({
     queryKey: ['recipes', detailId],
     queryFn: () => api.get<RecipeDetailResponse>(`/recipes/${detailId}`).then((r) => r.data),
@@ -223,7 +229,7 @@ export function RecipesPage() {
 
       {/* Recipe Detail Dialog */}
       <Dialog
-        open={!!selectedRecipeId && !editingRecipeId && !labelRecipeId && !!recipeDetail}
+        open={!!selectedRecipeId && !editingRecipeId && !labelRecipeId && !prepareRecipeId && !!recipeDetail}
         onClose={() => setSelectedRecipeId(null)}
         className="max-w-2xl"
       >
@@ -348,6 +354,16 @@ export function RecipesPage() {
               >
                 Edit
               </Button>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => {
+                  setPrepareRecipeId(recipeDetail.id);
+                  setSelectedRecipeId(null);
+                }}
+              >
+                🍳 Prepare
+              </Button>
               <Button variant="outline" onClick={() => setSelectedRecipeId(null)}>Close</Button>
             </DialogFooter>
           </>
@@ -405,6 +421,14 @@ export function RecipesPage() {
           </>
         )}
       </Dialog>
+
+      {/* Prepare Recipe Dialog */}
+      <PrepareRecipeDialog
+        open={!!prepareRecipeId && !!recipeDetail}
+        recipe={recipeDetail && prepareRecipeId === recipeDetail.id ? recipeDetail : null}
+        availability={prepareRecipeId ? availability?.[prepareRecipeId] ?? null : null}
+        onClose={() => setPrepareRecipeId(null)}
+      />
     </div>
   );
 }
@@ -462,5 +486,273 @@ function IngredientStatus({
     <Badge variant="outline" className="text-xs" title="Storage entries use a unit we can't convert against the recipe's unit.">
       ?
     </Badge>
+  );
+}
+
+interface PrepareRecipeDialogProps {
+  open: boolean;
+  recipe: RecipeDetailResponse | null;
+  /** Availability at 1× scale — we apply the chosen scale client-side. */
+  availability: RecipeAvailabilityResponse | null;
+  onClose: () => void;
+}
+
+function PrepareRecipeDialog({ open, recipe, availability, onClose }: PrepareRecipeDialogProps) {
+  const queryClient = useQueryClient();
+  const [scale, setScale] = useState('1');
+  const [allowShortage, setAllowShortage] = useState(false);
+  const [storeLeftovers, setStoreLeftovers] = useState(true);
+  const [storageSpaceId, setStorageSpaceId] = useState('');
+  const [storedQuantity, setStoredQuantity] = useState('');
+  const [storedExpiry, setStoredExpiry] = useState('');
+  const [notes, setNotes] = useState('');
+
+  const { data: storageSpaces } = useQuery({
+    queryKey: ['storage', 'spaces'],
+    queryFn: () =>
+      api.get<StorageSpaceResponse[]>('/storage/spaces').then((r) => r.data),
+    enabled: open,
+  });
+
+  // Reset form whenever the dialog opens for a fresh recipe.
+  useEffect(() => {
+    if (!open || !recipe) return;
+    setScale('1');
+    setAllowShortage(false);
+    setStoreLeftovers(true);
+    setStorageSpaceId('');
+    setStoredQuantity('');
+    setStoredExpiry('');
+    setNotes('');
+  }, [open, recipe?.id]);
+
+  const scaleNum = Math.max(0, parseFloat(scale) || 0);
+  const defaultStoredQty = scaleNum * (recipe?.servings ?? 1);
+
+  // Re-evaluate shortages at the chosen scale against the 1× availability.
+  const shortages =
+    availability?.ingredients
+      .map((ing) => {
+        const needed = ing.needed * scaleNum;
+        const isUnknown = ing.status === 'unknown';
+        const isShort = !isUnknown && needed > ing.have + 1e-9;
+        return { ing, needed, isShort, isUnknown };
+      })
+      .filter((row) => row.isShort || row.isUnknown) ?? [];
+  const hasShortages = shortages.length > 0;
+
+  // Pre-check "allow shortage" the moment a shortfall appears at this scale.
+  useEffect(() => {
+    setAllowShortage(hasShortages);
+  }, [hasShortages]);
+
+  const prepareMutation = useMutation({
+    mutationFn: (input: PrepareRecipeInput) =>
+      api.post<RecipePreparationResponse>(`/recipes/${recipe!.id}/prepare`, input),
+    onSuccess: () => {
+      // Stock and recipe availability both changed.
+      queryClient.invalidateQueries({ queryKey: ['storage'] });
+      queryClient.invalidateQueries({ queryKey: ['recipes', 'availability'] });
+      queryClient.invalidateQueries({ queryKey: ['recipes'] });
+      onClose();
+    },
+  });
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!recipe || scaleNum <= 0) return;
+    const storedQtyNum = storedQuantity ? parseFloat(storedQuantity) : NaN;
+    const payload: PrepareRecipeInput = {
+      scale: scaleNum,
+      allowShortage,
+      notes: notes.trim() || undefined,
+    };
+    if (storeLeftovers && storageSpaceId) {
+      payload.storageSpaceId = storageSpaceId;
+      payload.storedQuantity = Number.isFinite(storedQtyNum) && storedQtyNum > 0 ? storedQtyNum : undefined;
+      payload.storedUnit = 'serving';
+      payload.storedExpiryDate = storedExpiry
+        ? new Date(storedExpiry + 'T12:00:00Z').toISOString()
+        : null;
+    }
+    prepareMutation.mutate(payload);
+  }
+
+  const submitDisabled =
+    prepareMutation.isPending ||
+    scaleNum <= 0 ||
+    (hasShortages && !allowShortage) ||
+    (storeLeftovers && !storageSpaceId);
+
+  if (!open || !recipe) {
+    return <Dialog open={false} onClose={onClose}><div /></Dialog>;
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} className="max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>Prepare: {recipe.name}</DialogTitle>
+      </DialogHeader>
+      <form onSubmit={handleSubmit}>
+        <div className="space-y-4 max-h-[65vh] overflow-y-auto">
+          {/* Scale */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">How much did you make?</label>
+            <div className="flex flex-wrap items-center gap-2">
+              {[0.5, 1, 1.5, 2].map((s) => (
+                <Button
+                  key={s}
+                  type="button"
+                  size="sm"
+                  variant={parseFloat(scale) === s ? 'default' : 'outline'}
+                  onClick={() => setScale(String(s))}
+                >
+                  {s}× ({s * recipe.servings} {recipe.servingUnit ?? 'serving'}
+                  {s * recipe.servings === 1 ? '' : 's'})
+                </Button>
+              ))}
+              <span className="text-xs text-muted-foreground">or</span>
+              <Input
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={scale}
+                onChange={(e) => setScale(e.target.value)}
+                className="w-24"
+              />
+              <span className="text-xs text-muted-foreground">× the recipe</span>
+            </div>
+          </div>
+
+          {/* Ingredient preview */}
+          {availability && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Will be consumed</label>
+              <div className="space-y-1 rounded border border-border p-2 text-sm">
+                {availability.ingredients.map((ing) => {
+                  const needed = ing.needed * scaleNum;
+                  const isUnknown = ing.status === 'unknown';
+                  const isShort = !isUnknown && needed > ing.have + 1e-9;
+                  return (
+                    <div
+                      key={ing.ingredientId}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span className="min-w-0 truncate">{ing.productName}</span>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className={isShort ? 'text-destructive font-medium' : ''}>
+                          {Number(needed.toFixed(2))} {ing.neededUnit}
+                        </span>
+                        <span>/</span>
+                        <span>
+                          have {Number(ing.have.toFixed(2))} {ing.canonicalUnit}
+                        </span>
+                        {isShort && <Badge variant="warning" className="text-xs">short</Badge>}
+                        {isUnknown && <Badge variant="outline" className="text-xs">?</Badge>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Allow shortage */}
+          {hasShortages && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={allowShortage}
+                onChange={(e) => setAllowShortage(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Cook anyway — leave shortages at 0 in stock</span>
+                <span className="block text-xs text-muted-foreground">
+                  Inventory never goes negative. Short ingredients get drained to 0 and the rest
+                  is deducted as normal.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {/* Store leftovers */}
+          <div className="space-y-2 pt-2 border-t border-border">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={storeLeftovers}
+                onChange={(e) => setStoreLeftovers(e.target.checked)}
+              />
+              <span className="font-medium">Save leftovers to storage</span>
+            </label>
+            {storeLeftovers && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-6">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Storage space</label>
+                  <Select
+                    value={storageSpaceId}
+                    onChange={(e) => setStorageSpaceId(e.target.value)}
+                  >
+                    <option value="">— Pick one —</option>
+                    {storageSpaces?.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">
+                    Servings (default {Number(defaultStoredQty.toFixed(2))})
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={storedQuantity}
+                    onChange={(e) => setStoredQuantity(e.target.value)}
+                    placeholder={String(defaultStoredQty)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Expires (optional)</label>
+                  <Input
+                    type="date"
+                    value={storedExpiry}
+                    onChange={(e) => setStoredExpiry(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground">Notes (optional)</label>
+            <Input
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any tweaks you made…"
+            />
+          </div>
+
+          {prepareMutation.error && (
+            <p className="text-sm text-destructive">
+              {(prepareMutation.error as { response?: { data?: { error?: string } } }).response
+                ?.data?.error || 'Could not record the preparation'}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={submitDisabled}>
+            {prepareMutation.isPending ? 'Saving…' : 'Done cooking'}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   );
 }

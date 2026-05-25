@@ -2,13 +2,16 @@ import { and, eq, gt, desc, inArray } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
   products,
+  productPresentations,
   productServingUnits,
+  recipePreparations,
   recipes,
   recipeIngredients,
   storageItems,
   storageSpaces,
+  users,
 } from '../../db/schema.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { ConflictError, NotFoundError } from '../../lib/errors.js';
 import {
   areUnitsCompatible,
   convertUnit,
@@ -20,8 +23,10 @@ import type {
   CreateRecipeInput,
   UpdateRecipeInput,
   NutritionalFacts,
+  PrepareRecipeInput,
   RecipeAvailabilityResponse,
   RecipeIngredientAvailability,
+  RecipePreparationResponse,
   RecipeResponse,
   RecipeDetailResponse,
   RecipeSuggestionResponse,
@@ -626,4 +631,297 @@ export async function getAllRecipesAvailability(
     };
   }
   return out;
+}
+
+// ==================== Prepare (consume stock + store leftovers) ====================
+
+export interface ShortageError {
+  productId: string;
+  productName: string;
+  requested: number;
+  requestedUnit: string;
+  available: number;
+}
+
+/**
+ * "I just cooked this." Deducts the scaled ingredient requirements from
+ * household storage (oldest-expiring lot first, FIFO, never negative), and
+ * optionally saves the leftovers as a storage entry tied to a per-recipe
+ * companion product.
+ */
+export async function prepareRecipe(args: {
+  recipeId: string;
+  householdId: string;
+  userId: string;
+  input: PrepareRecipeInput;
+}): Promise<RecipePreparationResponse> {
+  const { recipeId, householdId, userId, input } = args;
+  const scale = input.scale > 0 ? input.scale : 1;
+
+  const recipe = await db.query.recipes.findFirst({
+    where: and(eq(recipes.id, recipeId), eq(recipes.householdId, householdId)),
+    with: { ingredients: { with: { product: true } } },
+  });
+  if (!recipe) throw new NotFoundError('Recipe');
+
+  // Validate storage space (if user asked to save leftovers).
+  let storageSpaceId: string | null = null;
+  if (input.storageSpaceId) {
+    const space = await db.query.storageSpaces.findFirst({
+      where: and(eq(storageSpaces.id, input.storageSpaceId), eq(storageSpaces.householdId, householdId)),
+    });
+    if (!space) throw new NotFoundError('Storage space');
+    storageSpaceId = space.id;
+  }
+
+  // Per-product custom units, used by the conversion engine when storage rows
+  // are in a different unit than the recipe asks for.
+  const productIds = recipe.ingredients.map((i) => i.productId);
+  const servingRows =
+    productIds.length > 0
+      ? await db
+          .select({
+            productId: productServingUnits.productId,
+            name: productServingUnits.name,
+            baseUnitEquivalent: productServingUnits.baseUnitEquivalent,
+            targetUnit: productServingUnits.targetUnit,
+          })
+          .from(productServingUnits)
+          .where(inArray(productServingUnits.productId, productIds))
+      : [];
+  const customsByProduct = new Map<string, ProductCustomUnit[]>();
+  for (const r of servingRows) {
+    const list = customsByProduct.get(r.productId);
+    if (list) list.push(r);
+    else customsByProduct.set(r.productId, [r]);
+  }
+
+  // Plan deductions per ingredient without writing yet. Catches shortage
+  // up-front so we don't half-consume when the user didn't OK the shortfall.
+  interface PlannedDeduction {
+    rowId: string;
+    /** Quantity to remove in the row's stored unit. */
+    deltaInRowUnit: number;
+    /** Equivalent contribution in the ingredient's unit (for the response ledger). */
+    contributedInIngredientUnit: number;
+  }
+  interface IngredientPlan {
+    ingredientId: string;
+    productId: string;
+    productName: string;
+    requested: number;
+    requestedUnit: string;
+    deductions: PlannedDeduction[];
+    deducted: number;
+    shortage: number;
+  }
+
+  const plans: IngredientPlan[] = [];
+  const shortages: ShortageError[] = [];
+
+  for (const ing of recipe.ingredients) {
+    const requested = ing.quantity * scale;
+    const requestedUnit = ing.unit;
+    const baseUnit = ing.product?.nutritionBaseUnit ?? requestedUnit;
+    const customs = customsByProduct.get(ing.productId) ?? [];
+
+    const rows = await db
+      .select({
+        id: storageItems.id,
+        quantity: storageItems.quantity,
+        unit: storageItems.unit,
+        expiryDate: storageItems.expiryDate,
+        addedAt: storageItems.addedAt,
+      })
+      .from(storageItems)
+      .innerJoin(storageSpaces, eq(storageSpaces.id, storageItems.storageSpaceId))
+      .where(
+        and(eq(storageSpaces.householdId, householdId), eq(storageItems.productId, ing.productId)),
+      );
+
+    // Expiry-soonest first (FIFO that minimizes waste); rows without expiry
+    // fall to the back; tiebreak on addedAt (oldest first).
+    rows.sort((a, b) => {
+      const ax = a.expiryDate?.getTime() ?? Number.POSITIVE_INFINITY;
+      const bx = b.expiryDate?.getTime() ?? Number.POSITIVE_INFINITY;
+      if (ax !== bx) return ax - bx;
+      return a.addedAt.getTime() - b.addedAt.getTime();
+    });
+
+    let remaining = requested;
+    const deductions: PlannedDeduction[] = [];
+
+    for (const row of rows) {
+      if (remaining <= 1e-9) break;
+      // How much does this whole row provide, in the ingredient's unit?
+      const fullContribution = productAwareConvert(row.quantity, row.unit, requestedUnit, {
+        baseUnit,
+        customUnits: customs,
+      });
+      if (fullContribution == null || fullContribution <= 0) continue;
+
+      if (fullContribution <= remaining + 1e-9) {
+        // Consume entire row.
+        deductions.push({
+          rowId: row.id,
+          deltaInRowUnit: row.quantity,
+          contributedInIngredientUnit: fullContribution,
+        });
+        remaining -= fullContribution;
+      } else {
+        // Consume partial — proportional to the conversion.
+        const ratio = remaining / fullContribution;
+        deductions.push({
+          rowId: row.id,
+          deltaInRowUnit: row.quantity * ratio,
+          contributedInIngredientUnit: remaining,
+        });
+        remaining = 0;
+      }
+    }
+
+    const deducted = requested - Math.max(0, remaining);
+    const shortage = Math.max(0, remaining);
+    if (shortage > 1e-6) {
+      shortages.push({
+        productId: ing.productId,
+        productName: ing.product?.name ?? '(unknown)',
+        requested,
+        requestedUnit,
+        available: deducted,
+      });
+    }
+
+    plans.push({
+      ingredientId: ing.id,
+      productId: ing.productId,
+      productName: ing.product?.name ?? '(unknown)',
+      requested,
+      requestedUnit,
+      deductions,
+      deducted,
+      shortage,
+    });
+  }
+
+  if (shortages.length > 0 && !input.allowShortage) {
+    const err = new ConflictError('Insufficient stock for one or more ingredients');
+    (err as ConflictError & { shortages: ShortageError[] }).shortages = shortages;
+    throw err;
+  }
+
+  // Apply the plan inside one transaction. Storage rows that hit zero are
+  // deleted; partial rows get their quantity updated. If leftovers are being
+  // stored, lazily ensure recipe.resultProductId points at a companion
+  // product and add a storage_items row for the cooked dish.
+  const persisted = await db.transaction(async (tx) => {
+    for (const plan of plans) {
+      for (const d of plan.deductions) {
+        const [row] = await tx
+          .select({ id: storageItems.id, quantity: storageItems.quantity })
+          .from(storageItems)
+          .where(eq(storageItems.id, d.rowId));
+        if (!row) continue;
+        const next = Math.max(0, row.quantity - d.deltaInRowUnit);
+        if (next <= 1e-9) {
+          await tx.delete(storageItems).where(eq(storageItems.id, row.id));
+        } else {
+          await tx
+            .update(storageItems)
+            .set({ quantity: next })
+            .where(eq(storageItems.id, row.id));
+        }
+      }
+    }
+
+    let storedItemId: string | null = null;
+    if (storageSpaceId) {
+      // Resolve (and lazily create) the recipe's companion product. Reused on
+      // subsequent preps so leftovers from the same recipe stack together.
+      let resultProductId = recipe.resultProductId;
+      if (!resultProductId) {
+        const [newProduct] = await tx
+          .insert(products)
+          .values({
+            name: recipe.name,
+            // No category / no nutrition facts yet — those can be filled in
+            // later. Companion products track the recipe via resultProductId.
+            nutritionBaseAmount: recipe.servingWeightGrams ?? 100,
+            nutritionBaseUnit: 'g',
+          })
+          .returning({ id: products.id });
+        // Default "Default" 1-unit presentation to keep Model B invariants
+        // satisfied (every product has at least one presentation).
+        await tx.insert(productPresentations).values({
+          productId: newProduct.id,
+          name: 'Default',
+          amount: 1,
+          unit: 'unit',
+          isDefault: true,
+        });
+        await tx
+          .update(recipes)
+          .set({ resultProductId: newProduct.id })
+          .where(eq(recipes.id, recipe.id));
+        resultProductId = newProduct.id;
+      }
+
+      const storedQuantity = input.storedQuantity ?? scale * recipe.servings;
+      const storedUnit = input.storedUnit ?? 'serving';
+
+      const [storedItem] = await tx
+        .insert(storageItems)
+        .values({
+          storageSpaceId,
+          productId: resultProductId,
+          quantity: storedQuantity,
+          unit: storedUnit,
+          addedById: userId,
+          expiryDate: input.storedExpiryDate ? new Date(input.storedExpiryDate) : null,
+        })
+        .returning({ id: storageItems.id });
+      storedItemId = storedItem.id;
+    }
+
+    const [prep] = await tx
+      .insert(recipePreparations)
+      .values({
+        recipeId: recipe.id,
+        householdId,
+        preparedById: userId,
+        scale,
+        allowedShortage: shortages.length > 0,
+        notes: input.notes,
+        storedItemId,
+      })
+      .returning();
+
+    return prep;
+  });
+
+  const preparedBy = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { name: true },
+  });
+
+  return {
+    id: persisted.id,
+    recipeId: persisted.recipeId,
+    preparedById: persisted.preparedById,
+    preparedByName: preparedBy?.name ?? '(unknown)',
+    scale: persisted.scale,
+    allowedShortage: persisted.allowedShortage,
+    notes: persisted.notes,
+    storedItemId: persisted.storedItemId,
+    preparedAt: persisted.preparedAt.toISOString(),
+    consumption: plans.map((p) => ({
+      ingredientId: p.ingredientId,
+      productId: p.productId,
+      productName: p.productName,
+      requested: p.requested,
+      requestedUnit: p.requestedUnit,
+      deducted: p.deducted,
+      shortage: p.shortage,
+    })),
+  };
 }

@@ -112,3 +112,52 @@ export interface RecipeAvailabilityResponse {
   matchScore: number;
   ingredients: RecipeIngredientAvailability[];
 }
+
+export const prepareRecipeSchema = z
+  .object({
+    /** Multiplier (1 = recipe as written). */
+    scale: z.number().positive().default(1),
+    /** True to proceed even when some ingredients are short of the scaled need. */
+    allowShortage: z.boolean().default(false),
+    /** When set, leftovers get stored in this space as a household stock entry. */
+    storageSpaceId: z.string().uuid().nullable().optional(),
+    /** Quantity of leftovers placed in storage (defaults to `scale × servings` when omitted). */
+    storedQuantity: z.number().positive().optional(),
+    /** Unit for the stored quantity. Defaults to 'serving'. */
+    storedUnit: z.string().optional(),
+    /** Optional expiry on the leftovers row. */
+    storedExpiryDate: z.string().datetime().nullable().optional(),
+    notes: z.string().max(2000).optional(),
+  })
+  .refine(
+    (data) => !data.storedQuantity || (data.storageSpaceId != null),
+    { message: 'storageSpaceId is required when storing leftovers' },
+  );
+
+export type PrepareRecipeInput = z.infer<typeof prepareRecipeSchema>;
+
+export interface RecipePreparationResponse {
+  id: string;
+  recipeId: string;
+  preparedById: string;
+  preparedByName: string;
+  scale: number;
+  allowedShortage: boolean;
+  notes: string | null;
+  /** Resulting storage row id, when leftovers were saved. */
+  storedItemId: string | null;
+  preparedAt: string;
+  /** Per-ingredient ledger of what was actually deducted from storage. */
+  consumption: {
+    ingredientId: string;
+    productId: string;
+    productName: string;
+    /** What the recipe asked for (scale-adjusted), in the ingredient's unit. */
+    requested: number;
+    requestedUnit: string;
+    /** What was actually deducted, expressed in the ingredient's unit. */
+    deducted: number;
+    /** Remaining shortfall in the ingredient's unit (positive when allowShortage was used). */
+    shortage: number;
+  }[];
+}

@@ -116,6 +116,9 @@ export {
   type RecipeSuggestionResponse,
   type RecipeAvailabilityResponse,
   type RecipeIngredientAvailability,
+  prepareRecipeSchema,
+  type PrepareRecipeInput,
+  type RecipePreparationResponse,
 } from './schemas/recipes.js';
 
 // Finance
