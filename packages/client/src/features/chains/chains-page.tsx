@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Store } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,7 +47,10 @@ export function ChainsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Chains</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Store className="h-6 w-6 sm:h-7 sm:w-7 text-finance" />
+          Chains
+        </h1>
         <Button onClick={() => setOpen(true)}>Add chain</Button>
       </div>
       <p className="text-muted-foreground">
@@ -62,7 +66,8 @@ export function ChainsPage() {
           {!chains || chains.length === 0 ? (
             <p className="px-4 py-3 text-sm text-muted-foreground">No chains yet.</p>
           ) : (
-            <table className="w-full text-sm">
+            <div className="table-scroll -mx-2 sm:mx-0">
+            <table className="w-full text-sm min-w-[480px]">
               <thead className="border-b border-border">
                 <tr className="text-left text-xs uppercase text-muted-foreground">
                   <th className="px-4 py-2">Key</th>
@@ -91,6 +96,7 @@ export function ChainsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>

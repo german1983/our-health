@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { BookOpen } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -115,7 +116,10 @@ export function RecipesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Recipes</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <BookOpen className="h-6 w-6 sm:h-7 sm:w-7 text-fitness" />
+          Recipes
+        </h1>
         <Button onClick={() => setShowCreate(true)}>New Recipe</Button>
       </div>
 

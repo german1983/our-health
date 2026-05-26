@@ -540,7 +540,8 @@ export function ReceiptDetailPage() {
           </label>
         </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full text-sm">
+          <div className="table-scroll">
+          <table className="w-full text-sm min-w-[960px]">
             <thead className="border-b border-border">
               <tr className="text-left text-xs uppercase text-muted-foreground">
                 <th className="px-4 py-2">Name</th>
@@ -665,6 +666,7 @@ export function ReceiptDetailPage() {
               </tr>
             </tfoot>
           </table>
+          </div>
         </CardContent>
       </Card>
 

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ShoppingBasket } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -109,7 +110,10 @@ export function GroceryPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Grocery</h1>
+      <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+        <ShoppingBasket className="h-6 w-6 sm:h-7 sm:w-7 text-fitness" />
+        Grocery
+      </h1>
 
       {/* Barcode Scanner */}
       <Card>

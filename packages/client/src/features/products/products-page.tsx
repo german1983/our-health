@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Tags } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
@@ -70,7 +71,10 @@ export function ProductsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Products</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Tags className="h-6 w-6 sm:h-7 sm:w-7 text-fitness" />
+          Products
+        </h1>
         <Button onClick={() => setShowCreate(true)}>New product</Button>
       </div>
 

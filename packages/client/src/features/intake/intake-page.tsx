@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Apple } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -866,7 +867,10 @@ export function IntakePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Daily Intake</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Apple className="h-6 w-6 sm:h-7 sm:w-7 text-fitness" />
+          Daily Intake
+        </h1>
       </div>
 
       {/* Date Navigation */}

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { CalendarClock, ChefHat, Package } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import api from '@/lib/api';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -37,46 +38,33 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Welcome, {user?.name}</h1>
-        <p className="text-muted-foreground">Here's an overview of your household.</p>
+      <div className="rounded-2xl bg-gradient-to-br from-fitness-soft via-background to-finance-soft p-5 sm:p-6 border border-border">
+        <h1 className="text-2xl sm:text-3xl font-bold">Hi, {user?.name?.split(' ')[0] ?? 'there'} 👋</h1>
+        <p className="text-muted-foreground mt-1">A quick look at your kitchen and your wallet.</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Inventory Summary */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Inventory</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{inventory?.length ?? 0}</div>
-            <p className="text-sm text-muted-foreground">items in storage</p>
-          </CardContent>
-        </Card>
-
-        {/* Expiring Items */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Expiring Soon</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-warning">{expiringItems?.length ?? 0}</div>
-            <p className="text-sm text-muted-foreground">items expire within 7 days</p>
-          </CardContent>
-        </Card>
-
-        {/* Recipes Available */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Recipes Ready</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-success">
-              {suggestions?.filter((s) => s.matchScore === 1).length ?? 0}
-            </div>
-            <p className="text-sm text-muted-foreground">recipes you can make now</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          icon={<Package className="h-5 w-5" />}
+          tint="fitness"
+          value={inventory?.length ?? 0}
+          label="items in storage"
+          title="Inventory"
+        />
+        <StatCard
+          icon={<CalendarClock className="h-5 w-5" />}
+          tint="warning"
+          value={expiringItems?.length ?? 0}
+          label="expire within 7 days"
+          title="Expiring soon"
+        />
+        <StatCard
+          icon={<ChefHat className="h-5 w-5" />}
+          tint="fitness"
+          value={suggestions?.filter((s) => s.matchScore === 1).length ?? 0}
+          label="recipes you can make"
+          title="Ready to cook"
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -152,5 +140,47 @@ export function DashboardPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+interface StatCardProps {
+  icon: React.ReactNode;
+  title: string;
+  value: number | string;
+  label: string;
+  tint: 'fitness' | 'finance' | 'warning';
+}
+
+/** Tinted summary tile for the dashboard hero strip. */
+function StatCard({ icon, title, value, label, tint }: StatCardProps) {
+  // Two tones per tint: a soft background for the icon chip, and a saturated
+  // accent for the number. Lets the eye scan the three stats at a glance.
+  const chip =
+    tint === 'fitness'
+      ? 'bg-fitness-soft text-fitness'
+      : tint === 'finance'
+        ? 'bg-finance-soft text-finance'
+        : 'bg-[oklch(0.95_0.05_75)] text-warning dark:bg-[oklch(0.30_0.07_75)]';
+  const number =
+    tint === 'fitness'
+      ? 'text-fitness'
+      : tint === 'finance'
+        ? 'text-finance'
+        : 'text-warning';
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-3">
+          <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${chip}`}>
+            {icon}
+          </span>
+          <div className="min-w-0">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">{title}</div>
+            <div className={`text-2xl sm:text-3xl font-bold ${number}`}>{value}</div>
+            <div className="text-xs text-muted-foreground">{label}</div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

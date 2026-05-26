@@ -18,55 +18,108 @@
   --color-warning: var(--warning);
   --color-card: var(--card);
   --color-card-foreground: var(--card-fg);
-  --radius: 0.5rem;
+  /* Section-tinted surfaces — let pages set a subtle background tint per
+     module (sage for Fitness, peach for Finance). */
+  --color-fitness: var(--fitness);
+  --color-fitness-soft: var(--fitness-soft);
+  --color-finance: var(--finance);
+  --color-finance-soft: var(--finance-soft);
+  --radius: 0.625rem;
 }
 
+/* ---- Light mode (default): warm cream + sage + dusty peach. ---- */
 :root {
-  --bg: #ffffff;
-  --fg: #0a0a0a;
-  --muted: #f5f5f5;
-  --muted-fg: #737373;
-  --border: #e5e5e5;
-  --primary: #2563eb;
-  --primary-fg: #ffffff;
-  --secondary: #f5f5f5;
-  --secondary-fg: #171717;
-  --accent: #f5f5f5;
-  --accent-fg: #171717;
-  --destructive: #ef4444;
-  --destructive-fg: #ffffff;
-  --success: #22c55e;
-  --warning: #f59e0b;
+  --bg: #fbf9f5;          /* warm off-white */
+  --fg: #1f201d;          /* deep charcoal */
+  --muted: #f1ede5;       /* warm sand */
+  --muted-fg: #6b6a64;    /* warm gray */
+  --border: #e6e1d6;      /* parchment */
+  --primary: #6f8f72;     /* sage green */
+  --primary-fg: #fbf9f5;
+  --secondary: #ece4d6;   /* soft cream */
+  --secondary-fg: #1f201d;
+  --accent: #e6b89c;      /* dusty peach */
+  --accent-fg: #1f201d;
+  --destructive: #b85850; /* soft terracotta */
+  --destructive-fg: #fbf9f5;
+  --success: #6f8f72;     /* same sage — "things are healthy" */
+  --warning: #c9883a;     /* amber, warmer than #f59e0b */
   --card: #ffffff;
-  --card-fg: #0a0a0a;
+  --card-fg: #1f201d;
+  --fitness: #7da180;       /* sage tint for fitness section accents */
+  --fitness-soft: #e3ede4;
+  --finance: #b78663;       /* soft umber for finance section accents */
+  --finance-soft: #f0e6dc;
 }
 
+/* ---- Dark mode: warm slate + brighter sage + warm peach. ---- */
+.dark {
+  --bg: #1c1e22;
+  --fg: #ece8df;
+  --muted: #292c31;
+  --muted-fg: #a09b8e;
+  --border: #393d44;
+  --primary: #9fbf9a;     /* sage, lifted */
+  --primary-fg: #1c1e22;
+  --secondary: #292c31;
+  --secondary-fg: #ece8df;
+  --accent: #e6b89c;      /* keep peach warm */
+  --accent-fg: #1c1e22;
+  --destructive: #d27068;
+  --destructive-fg: #1c1e22;
+  --success: #9fbf9a;
+  --warning: #e0a35a;
+  --card: #25282d;
+  --card-fg: #ece8df;
+  --fitness: #9fbf9a;
+  --fitness-soft: #2a342c;
+  --finance: #d4a373;
+  --finance-soft: #33291f;
+}
+
+/* Auto-dark when the user hasn't explicitly chosen, so first-load on a
+   phone in dark mode looks right. The toggle adds/removes .dark on <html>
+   and persists in localStorage — see theme-toggle.tsx. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0a0a;
-    --fg: #fafafa;
-    --muted: #262626;
-    --muted-fg: #a3a3a3;
-    --border: #3a3a3a;
-    --primary: #3b82f6;
-    --primary-fg: #ffffff;
-    --secondary: #262626;
-    --secondary-fg: #fafafa;
-    --accent: #262626;
-    --accent-fg: #fafafa;
-    --destructive: #ef4444;
-    --destructive-fg: #ffffff;
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --card: #141414;
-    --card-fg: #fafafa;
+  :root:not(.light) {
+    --bg: #1c1e22;
+    --fg: #ece8df;
+    --muted: #292c31;
+    --muted-fg: #a09b8e;
+    --border: #393d44;
+    --primary: #9fbf9a;
+    --primary-fg: #1c1e22;
+    --secondary: #292c31;
+    --secondary-fg: #ece8df;
+    --accent: #e6b89c;
+    --accent-fg: #1c1e22;
+    --destructive: #d27068;
+    --destructive-fg: #1c1e22;
+    --success: #9fbf9a;
+    --warning: #e0a35a;
+    --card: #25282d;
+    --card-fg: #ece8df;
+    --fitness: #9fbf9a;
+    --fitness-soft: #2a342c;
+    --finance: #d4a373;
+    --finance-soft: #33291f;
   }
 }
 
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+  /* Better text rendering on macOS / iOS. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Bigger tap targets on touch devices — 44 px is Apple's minimum. */
+@media (pointer: coarse) {
+  button, a[role="button"], [data-tap] {
+    min-height: 44px;
+  }
 }
 
 dialog {
@@ -75,5 +128,17 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(28, 30, 34, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+/* Tables on narrow screens get horizontal scroll; wrap with .table-scroll. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Bottom-tab safe area for iOS home indicator. */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
 }

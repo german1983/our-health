@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Users } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,7 +51,10 @@ export function HouseholdPage() {
   if (error || !household) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">Household</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Users className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground" />
+          Household
+        </h1>
         <Card>
           <CardContent className="p-6 text-center space-y-4">
             <p className="text-muted-foreground">You don't belong to a household yet.</p>
@@ -103,7 +107,10 @@ export function HouseholdPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">{household.name}</h1>
+      <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+        <Users className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground" />
+        {household.name}
+      </h1>
 
       <Card>
         <CardHeader>
