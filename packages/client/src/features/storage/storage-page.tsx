@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Refrigerator } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -124,7 +125,10 @@ export function StoragePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Storage</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Refrigerator className="h-6 w-6 sm:h-7 sm:w-7 text-fitness" />
+          Storage
+        </h1>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setShowAddSpace(true)}>Add Space</Button>
           <Button size="sm" onClick={() => { setShowAddItem(true); setItemSpaceId(spaces?.[0]?.id || ''); }}>Add Item</Button>

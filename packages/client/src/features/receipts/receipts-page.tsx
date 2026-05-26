@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Receipt } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -151,7 +152,10 @@ export function ReceiptsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Receipts</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <Receipt className="h-6 w-6 sm:h-7 sm:w-7 text-finance" />
+          Receipts
+        </h1>
         <Button variant="outline" onClick={() => setShowManual(true)}>
           Add manual receipt
         </Button>

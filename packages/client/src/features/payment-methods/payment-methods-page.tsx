@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CreditCard } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,7 +65,10 @@ export function PaymentMethodsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Payment methods</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
+          <CreditCard className="h-6 w-6 sm:h-7 sm:w-7 text-finance" />
+          Payment methods
+        </h1>
         <Button onClick={() => setOpen(true)}>Add method</Button>
       </div>
       <p className="text-muted-foreground">
@@ -82,7 +86,8 @@ export function PaymentMethodsPage() {
               No payment methods yet. Add one to start recording transactions from receipts.
             </p>
           ) : (
-            <table className="w-full text-sm">
+            <div className="table-scroll -mx-2 sm:mx-0">
+            <table className="w-full text-sm min-w-[480px]">
               <thead className="border-b border-border">
                 <tr className="text-left text-xs uppercase text-muted-foreground">
                   <th className="px-4 py-2">Name</th>
@@ -162,6 +167,7 @@ export function PaymentMethodsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </CardContent>
       </Card>
