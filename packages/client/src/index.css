@@ -123,13 +123,36 @@ body {
 }
 
 dialog {
-  color: inherit;
-  background: inherit;
+  /* Browsers' built-in <dialog> centers itself but leaves the background
+     transparent unless explicitly set. The bg-card class on the component
+     sets background-color, but historically we had `background: inherit`
+     here which made phones see the page through it. Force opaque + crisp. */
+  color: var(--color-card-foreground);
+  background-color: var(--color-card);
+  overscroll-behavior: contain;
 }
 
 dialog::backdrop {
   background: rgba(28, 30, 34, 0.55);
   backdrop-filter: blur(2px);
+}
+
+/* On phones, dialogs feel native when they fill the screen instead of
+   floating with the page peeking around them. Keep modal behavior on
+   tablets / desktops. */
+@media (max-width: 767px) {
+  dialog[open] {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    /* Let long forms scroll inside the dialog. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* Tables on narrow screens get horizontal scroll; wrap with .table-scroll. */

@@ -27,11 +27,22 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
       ref={dialogRef}
       onClose={onClose}
       className={cn(
-        'backdrop:bg-black/50 rounded-lg border border-border bg-card text-card-foreground p-0 shadow-lg max-w-lg w-full',
+        // Tablet+ : a normal centered modal with rounded corners and a card surface.
+        // Mobile  : the @media rule in index.css collapses width/height to fill the
+        //           viewport — we just don't fight it here. bg-card stays so the
+        //           dialog is opaque whatever the breakpoint.
+        'backdrop:bg-foreground/50 rounded-xl border border-border bg-card text-card-foreground p-0 shadow-xl max-w-lg w-full',
         className,
       )}
     >
-      <div className="p-6">{children}</div>
+      {/* Tighter padding on phones; reserve room for the iOS notch / home
+          indicator via safe-area padding so titles & footer buttons aren't
+          eaten by the system chrome. */}
+      <div
+        className="p-4 sm:p-6 max-md:pt-[max(1rem,env(safe-area-inset-top))] max-md:pb-[max(1rem,env(safe-area-inset-bottom))]"
+      >
+        {children}
+      </div>
     </dialog>
   );
 }
