@@ -5,7 +5,11 @@
   "outputDirectory": "packages/client/dist",
   "framework": null,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" }
+    { "source": "/api/(.*)", "destination": "/api" },
+    {
+      "source": "/((?!api|assets|favicon\\.ico|robots\\.txt).*)",
+      "destination": "/index.html"
+    }
   ],
   "functions": {
     "api/index.ts": {
