@@ -11,17 +11,19 @@ For each receipt:
 - subtotal, tax, total: numeric amounts if visible, else null.
 - items: each line item:
   - rawName: the description AS PRINTED on the receipt.
-  - rawCode: the SKU/UPC code printed next to the item (digits only), or null.
-  - taxCode: the single uppercase letter printed at the far right of the line that indicates the line's tax category on this chain's receipt (e.g. "J", "H", "D", "E", "X", "G"), or null if not present. Capture the letter as printed; do NOT interpret what it means.
+  - rawCode: the SKU/UPC code printed next to the item (digits only), or null. If the line starts with a parenthesized quantity prefix like "(2)" or "(3)" followed by the code, drop the prefix and use the code (the quantity goes into the quantity field).
+  - taxCode: the tax-category code printed on this line. It is one or more uppercase letters (often 1–4) and may appear EITHER between the description and the price (Loblaws style, e.g. "MRJ", "HMRJ", "RQ") OR at the far right (Walmart / Farm Boy style, e.g. "J", "H", "D", "E", "X", "G"). Capture the letters EXACTLY as printed; do NOT interpret what they mean and do NOT normalize case. Null when absent.
   - quantity: number (default 1).
-  - unitPrice: price per unit, or null.
-  - lineTotal: total dollar amount for that line.
-- transcript: a clean plain-text dump of the receipt's meaningful content (header line, items with their tax-code letters, totals). Skip OCR noise; use one item per line.
+  - unitPrice: price per single unit, or null.
+  - lineTotal: total dollar amount for that line (always the rightmost dollar value).
+- transcript: a clean plain-text dump of the receipt's meaningful content (header line, items with their tax codes, totals). Skip OCR noise; use one item per line.
 
 Rules:
-- Ignore header/footer text that isn't useful (loyalty messages, payment method, change due, "thank you", etc).
-- For weighed items ("0.449 kg @ $49.98/kg ... $22.44"), quantity=kg, unitPrice=price per kg, lineTotal=the dollar amount.
-- For "N @ $P.PP" multipliers, quantity=N, unitPrice=P.PP, lineTotal=N*P.PP.
+- Ignore header/footer text that isn't useful: department/section headers like "21-GROCERY", "22-DAIRY", "23-FROZEN", "27-PRODUCE", "36-HOME MEAL REPLACEMENT", loyalty messages, points-earned lines ("NO NAME EGGS 400 Pts"), payment method, card number, change due, "thank you", etc.
+- For weighed items ("1.055 kg @ \$4.41/kg ... 4.65"), quantity = kg, unitPrice = price per kg, lineTotal = the printed dollar amount.
+- For "N @ \$P.PP" multipliers, quantity = N, unitPrice = P.PP, lineTotal = the printed dollar total (which equals N × P.PP).
+- For deal pricing like "2 @ 2/\$8.00" (the rightmost number is the printed line total, e.g. 8.00), quantity = 2, lineTotal = 8.00, unitPrice = effective per-unit price (8.00 ÷ 2 = 4.00). Ignore any "or" alternative pricing line that immediately precedes (e.g. "\$5.19 ea or 2/\$8.00 KB") — it is advisory, the @ line is authoritative.
+- A line that prints points or loyalty units instead of dollars (e.g. "400 Pts") is not a purchased item — skip it.
 - All numeric fields must be JSON numbers, not strings.`;
 
 const RESPONSE_SCHEMA = {
