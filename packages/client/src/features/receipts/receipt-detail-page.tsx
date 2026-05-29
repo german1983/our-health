@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Link2, Link2Off, Lock, Trash2, Unlock } from 'lucide-react';
+import { ChevronLeft, Link2, Link2Off, Lock, Plus, Trash2, Unlock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import type {
   UpdateReceiptItemInput,
 } from '@personal-budget/shared';
 import { ProductPickerDialog } from './product-picker-dialog';
+import { CategorySelect, StorageSelect } from '@/components/quick-selects';
 
 /** Flatten the household category tree to an ordered list with depth-aware names. */
 function flattenCategories(tree: CategoryResponse[]): CategoryResponse[] {
@@ -433,30 +434,22 @@ export function ReceiptDetailPage() {
             </Select>
           </Field>
           <Field label="Default expense category">
-            <Select
+            <CategorySelect
               value={receipt.defaultCategoryId ?? ''}
               disabled={locked}
-              onChange={(e) => patchReceipt.mutate({ defaultCategoryId: e.target.value || null })}
-            >
-              <option value="">— None —</option>
-              {flatCategories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
+              options={flatCategories}
+              placeholder="— None —"
+              onChange={(id) => patchReceipt.mutate({ defaultCategoryId: id || null })}
+            />
           </Field>
           <Field label="Default storage space">
-            <Select
+            <StorageSelect
               value={receipt.defaultStorageSpaceId ?? ''}
               disabled={locked}
-              onChange={(e) =>
-                patchReceipt.mutate({ defaultStorageSpaceId: e.target.value || null })
-              }
-            >
-              <option value="">— Don't inventory —</option>
-              {storageSpacesData?.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </Select>
+              options={storageSpacesData ?? []}
+              placeholder="— Don't inventory —"
+              onChange={(id) => patchReceipt.mutate({ defaultStorageSpaceId: id || null })}
+            />
           </Field>
         </CardContent>
       </Card>
@@ -879,21 +872,17 @@ function ItemRow({
         {locked ? (
           <span className="text-xs text-muted-foreground">{item.financeCategoryName ?? '—'}</span>
         ) : (
-          <Select
+          <CategorySelect
             value={finCatValue}
             disabled={financeCatPending}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setFinCatValue(e.target.value);
-              onChangeFinanceCategory(next);
-            }}
+            options={financeCategories}
+            placeholder="— Use receipt default —"
             className="h-8 text-xs"
-          >
-            <option value="">— Use receipt default —</option>
-            {financeCategories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
+            onChange={(id) => {
+              setFinCatValue(id);
+              onChangeFinanceCategory(id || null);
+            }}
+          />
         )}
       </td>
       <td className="px-4 py-2">
@@ -901,18 +890,14 @@ function ItemRow({
           <span className="text-xs text-muted-foreground">{item.storageSpaceName ?? '—'}</span>
         ) : (
           <div className="space-y-1">
-            <Select
+            <StorageSelect
               value={item.storageSpaceId ?? ''}
               disabled={!item.productId}
-              onChange={(e) => onPatch({ storageSpaceId: e.target.value || null })}
+              options={storageSpaces}
+              placeholder="— Use receipt default —"
               className="h-8 text-xs"
-              title={item.productId ? undefined : 'Match a product first to inventory this line'}
-            >
-              <option value="">— Use receipt default —</option>
-              {storageSpaces.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </Select>
+              onChange={(id) => onPatch({ storageSpaceId: id || null })}
+            />
             {!item.storageSpaceId && item.suggestedStorageSpaceId && (
               <button
                 type="button"
@@ -1129,21 +1114,17 @@ function GroupRow({
         {locked ? (
           <span className="text-xs text-muted-foreground">{first.financeCategoryName ?? '—'}</span>
         ) : (
-          <Select
+          <CategorySelect
             value={finCatValue}
             disabled={financeCatPending}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setFinCatValue(e.target.value);
-              onChangeFinanceCategory(next);
-            }}
+            options={financeCategories}
+            placeholder="— Use receipt default —"
             className="h-8 text-xs"
-          >
-            <option value="">— Use receipt default —</option>
-            {financeCategories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
+            onChange={(id) => {
+              setFinCatValue(id);
+              onChangeFinanceCategory(id || null);
+            }}
+          />
         )}
       </td>
       <td className="px-4 py-2">
@@ -1151,18 +1132,14 @@ function GroupRow({
           <span className="text-xs text-muted-foreground">{first.storageSpaceName ?? '—'}</span>
         ) : (
           <div className="space-y-1">
-            <Select
+            <StorageSelect
               value={first.storageSpaceId ?? ''}
               disabled={!first.productId}
-              onChange={(e) => onPatchAll({ storageSpaceId: e.target.value || null })}
+              options={storageSpaces}
+              placeholder="— Use receipt default —"
               className="h-8 text-xs"
-              title={first.productId ? undefined : 'Match a product first'}
-            >
-              <option value="">— Use receipt default —</option>
-              {storageSpaces.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </Select>
+              onChange={(id) => onPatchAll({ storageSpaceId: id || null })}
+            />
             {!first.storageSpaceId && first.suggestedStorageSpaceId && (
               <button
                 type="button"
@@ -1535,6 +1512,7 @@ function AddItemCard({
 }: AddItemCardProps) {
   const [search, setSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<ProductResponse | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [presentationId, setPresentationId] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [unitPrice, setUnitPrice] = useState('');
@@ -1577,9 +1555,20 @@ function AddItemCard({
     setSearch(p.name);
   }
 
+  // After the picker creates/links a product, fetch it and select it so the
+  // presentation dropdown and the rest of the add form populate normally.
+  async function handlePickerSelect(productId: string, picked?: string | null) {
+    setPickerOpen(false);
+    const product = await api.get<ProductResponse>(`/products/${productId}`).then((r) => r.data);
+    setSelectedProduct(product);
+    setSearch(product.name);
+    if (picked) setPresentationId(picked);
+  }
+
   function reset() {
     setSearch('');
     setSelectedProduct(null);
+    setPickerOpen(false);
     setPresentationId('');
     setQuantity('1');
     setUnitPrice('');
@@ -1646,7 +1635,26 @@ function AddItemCard({
                 ))}
               </div>
             )}
+            {/* No match → offer to create it on the spot. */}
+            {!selectedProduct && search.trim().length > 1 && productResults && productResults.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              >
+                <Plus className="h-4 w-4" />
+                Create “{search.trim()}”
+              </button>
+            )}
           </div>
+
+          <ProductPickerDialog
+            open={pickerOpen}
+            initialQuery={search.trim()}
+            initialCategoryId={financeCategoryId || null}
+            onClose={() => setPickerOpen(false)}
+            onSelect={handlePickerSelect}
+          />
 
           {selectedProduct && productDetail && productDetail.presentations.length > 0 && (
             <div className="space-y-1">
@@ -1709,17 +1717,12 @@ function AddItemCard({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Storage</label>
-              <Select
+              <StorageSelect
                 value={storageSpaceId}
-                onChange={(e) => setStorageSpaceId(e.target.value)}
-              >
-                <option value="">
-                  {defaultStorageSpaceId ? '— Use receipt default —' : '— None —'}
-                </option>
-                {storageSpaces.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </Select>
+                options={storageSpaces}
+                placeholder={defaultStorageSpaceId ? '— Use receipt default —' : '— None —'}
+                onChange={setStorageSpaceId}
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Tax category</label>
@@ -1732,15 +1735,12 @@ function AddItemCard({
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">Expense category</label>
-              <Select
+              <CategorySelect
                 value={financeCategoryId}
-                onChange={(e) => setFinanceCategoryId(e.target.value)}
-              >
-                <option value="">— Use receipt default —</option>
-                {financeCategories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </Select>
+                options={financeCategories}
+                placeholder="— Use receipt default —"
+                onChange={setFinanceCategoryId}
+              />
             </div>
           </div>
 
