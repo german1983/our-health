@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -172,8 +172,7 @@ export function ProductPickerDialog({
     },
   });
 
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
+  function handleCreate() {
     if (createMode === 'new-product') {
       if (!form.name.trim()) return;
       createProductMutation.mutate(formToCreateInput(form));
@@ -299,7 +298,13 @@ export function ProductPickerDialog({
           </DialogFooter>
         </div>
       ) : (
-        <form onSubmit={handleCreate} className="space-y-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreate();
+          }}
+          className="space-y-3"
+        >
           {/* Three-way switch. Default is "brand-new product"; others link to
               an existing product so we don't fragment the same item across
               multiple Product rows. */}
@@ -517,7 +522,9 @@ export function ProductPickerDialog({
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={submitDisabled}>
+            {/* Explicit onClick + type=button so a parent <form> (the receipt
+                Add-an-item card wraps this in one) can't claim the submit. */}
+            <Button type="button" onClick={handleCreate} disabled={submitDisabled}>
               {submitting
                 ? 'Saving…'
                 : createMode === 'new-product'

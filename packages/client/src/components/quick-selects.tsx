@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -111,8 +111,7 @@ export function CategorySelect({
     },
   });
 
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
+  function handleCreate() {
     if (!name.trim()) return;
     createMutation.mutate({
       name: name.trim(),
@@ -145,7 +144,17 @@ export function CategorySelect({
         <DialogHeader>
           <DialogTitle>New expense category</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleCreate} className="space-y-4">
+        {/* Form keeps Enter-to-submit + HTML5 validation, but the action
+            buttons use onClick — so a parent <form> further up the tree
+            can't intercept the submit (the receipt detail's "Add an item"
+            card wraps these in its own form). */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreate();
+          }}
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <label className="text-sm font-medium">Name</label>
             <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
@@ -185,7 +194,11 @@ export function CategorySelect({
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createMutation.isPending || !name.trim()}>
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={createMutation.isPending || !name.trim()}
+            >
               {createMutation.isPending ? 'Creating…' : 'Create & select'}
             </Button>
           </DialogFooter>
@@ -236,8 +249,7 @@ export function StorageSelect({
     },
   });
 
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
+  function handleCreate() {
     if (!name.trim()) return;
     createMutation.mutate({ name: name.trim(), spaceType });
   }
@@ -265,7 +277,13 @@ export function StorageSelect({
         <DialogHeader>
           <DialogTitle>New storage space</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleCreate} className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreate();
+          }}
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <label className="text-sm font-medium">Name</label>
             <Input
@@ -296,7 +314,11 @@ export function StorageSelect({
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createMutation.isPending || !name.trim()}>
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={createMutation.isPending || !name.trim()}
+            >
               {createMutation.isPending ? 'Creating…' : 'Create & select'}
             </Button>
           </DialogFooter>
