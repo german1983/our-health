@@ -21,6 +21,7 @@ function format(row: EntryRow): CalendarEntryResponse {
     notes: row.notes,
     date: row.date.toISOString(),
     allDay: row.allDay,
+    trackYears: row.trackYears,
     createdById: row.createdById,
     createdByName: row.createdBy?.name ?? '',
     createdAt: row.createdAt.toISOString(),
@@ -30,6 +31,11 @@ function format(row: EntryRow): CalendarEntryResponse {
 /** UTC YYYY-MM-DD from a Date. We treat calendar dates as date-only in UTC. */
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** "HH:MM" (UTC) — the wall-clock time as the user entered it (we store local-as-UTC). */
+function hm(d: Date): string {
+  return d.toISOString().slice(11, 16);
 }
 
 export async function listEntries(householdId: string): Promise<CalendarEntryResponse[]> {
@@ -75,6 +81,7 @@ export async function getOccurrences(
           notes: row.notes,
           occurrenceDate: occ,
           allDay: row.allDay,
+          time: row.allDay ? null : hm(base),
           yearsSince: null,
         });
       }
@@ -98,8 +105,10 @@ export async function getOccurrences(
           title: row.title,
           notes: row.notes,
           occurrenceDate: occ,
-          allDay: row.allDay,
-          yearsSince: year - originalYear,
+          allDay: true,
+          time: null,
+          // Suppress the count when the user opted out of year tracking.
+          yearsSince: row.trackYears ? year - originalYear : null,
         });
       }
     }
@@ -123,6 +132,7 @@ export async function createEntry(
       notes: input.notes,
       date: new Date(input.date),
       allDay: input.allDay ?? true,
+      trackYears: input.trackYears ?? true,
       createdById: userId,
     })
     .returning({ id: calendarEntries.id });
@@ -150,6 +160,7 @@ export async function updateEntry(
   if (input.notes !== undefined) updates.notes = input.notes;
   if (input.date !== undefined) updates.date = new Date(input.date);
   if (input.allDay !== undefined) updates.allDay = input.allDay;
+  if (input.trackYears !== undefined) updates.trackYears = input.trackYears;
 
   if (Object.keys(updates).length > 0) {
     await db.update(calendarEntries).set(updates).where(eq(calendarEntries.id, id));

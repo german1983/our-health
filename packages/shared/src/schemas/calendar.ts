@@ -9,7 +9,10 @@ export const createCalendarEntrySchema = z.object({
   notes: z.string().max(2000).optional(),
   /** ISO datetime. For ANNIVERSARY only month/day recur; the year is the "since". */
   date: z.string().datetime(),
+  /** false → the date carries a time-of-day (timed event). Default all-day. */
   allDay: z.boolean().optional(),
+  /** Anniversaries: false hides/ignores the original year. Default true. */
+  trackYears: z.boolean().optional(),
 });
 export type CreateCalendarEntryInput = z.infer<typeof createCalendarEntrySchema>;
 
@@ -19,6 +22,7 @@ export const updateCalendarEntrySchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
   date: z.string().datetime().optional(),
   allDay: z.boolean().optional(),
+  trackYears: z.boolean().optional(),
 });
 export type UpdateCalendarEntryInput = z.infer<typeof updateCalendarEntrySchema>;
 
@@ -38,6 +42,7 @@ export interface CalendarEntryResponse {
   /** Original ISO datetime of the entry. */
   date: string;
   allDay: boolean;
+  trackYears: boolean;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -56,6 +61,8 @@ export interface CalendarOccurrence {
   notes: string | null;
   occurrenceDate: string;
   allDay: boolean;
-  /** Years elapsed since the original date — anniversaries only, else null. */
+  /** "HH:MM" (24h) for timed events; null for all-day. */
+  time: string | null;
+  /** Years elapsed since the original date — tracked anniversaries only, else null. */
   yearsSince: number | null;
 }

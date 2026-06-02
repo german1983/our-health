@@ -778,8 +778,14 @@ export const calendarEntries = pgTable(
      * date (no time component); see migration for the `date` column type.
      */
     date: timestamp('date', { withTimezone: true }).notNull(),
-    /** True for events with a time-of-day; false → all-day. */
+    /** True for all-day entries; false → the date carries a time-of-day (events). */
     allDay: boolean('all_day').notNull().default(true),
+    /**
+     * Anniversaries only: when false the original year is "don't care" — the
+     * UI hides the year input and occurrences omit the years-since count.
+     * Always true for events.
+     */
+    trackYears: boolean('track_years').notNull().default(true),
     createdById: uuid('created_by_id').notNull().references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
