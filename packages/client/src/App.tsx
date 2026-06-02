@@ -17,6 +17,7 @@ import { ReceiptsPage } from '@/features/receipts/receipts-page';
 import { ReceiptDetailPage } from '@/features/receipts/receipt-detail-page';
 import { ChainsPage } from '@/features/chains/chains-page';
 import { PaymentMethodsPage } from '@/features/payment-methods/payment-methods-page';
+import { CalendarPage } from '@/features/calendar/calendar-page';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="/receipts/:id" element={<ReceiptDetailPage />} />
               <Route path="/chains" element={<ChainsPage />} />
               <Route path="/payment-methods" element={<PaymentMethodsPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

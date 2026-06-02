@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, Navigate } from 'react-router-dom';
 import {
   Apple,
   BookOpen,
+  CalendarDays,
   CreditCard,
   Home,
   LogOut,
@@ -31,6 +32,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { path: '/dashboard', label: 'Dashboard', icon: Home, section: 'home' },
+  { path: '/calendar', label: 'Calendar', icon: CalendarDays, section: 'home' },
   // Fitness module — food in, food cooked, food eaten.
   { path: '/intake', label: 'Intake', icon: Apple, section: 'fitness' },
   { path: '/recipes', label: 'Recipes', icon: BookOpen, section: 'fitness' },
@@ -105,7 +107,11 @@ export function Layout() {
 
           {/* Desktop grouped nav */}
           <nav className="hidden md:flex items-center gap-5 flex-1">
-            <NavLink item={itemsBySection.home[0]} location={location} />
+            <div className="flex items-center gap-1">
+              {itemsBySection.home.map((item) => (
+                <NavLink key={item.path} item={item} location={location} />
+              ))}
+            </div>
             {sections.map((sec) => (
               <SectionGroup key={sec} label={SECTION_LABEL[sec]} section={sec} items={itemsBySection[sec]} location={location} />
             ))}

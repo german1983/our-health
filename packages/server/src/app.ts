@@ -14,6 +14,7 @@ import intakeRoutes from './modules/intake/routes.js';
 import receiptRoutes from './modules/receipt/routes.js';
 import chainRoutes from './modules/chain/routes.js';
 import paymentMethodRoutes from './modules/payment-method/routes.js';
+import calendarRoutes from './modules/calendar/routes.js';
 
 const app = express();
 
@@ -41,6 +42,7 @@ app.use('/api/intake', intakeRoutes);
 app.use('/api/receipts', receiptRoutes);
 app.use('/api/chains', chainRoutes);
 app.use('/api/payment-methods', paymentMethodRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 app.use(errorHandler);
 

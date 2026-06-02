@@ -229,3 +229,17 @@ export {
   type DailyLogResponse,
   type IntakeSummaryResponse,
 } from './schemas/intake.js';
+
+// Calendar
+export {
+  calendarEntryTypeEnum,
+  createCalendarEntrySchema,
+  updateCalendarEntrySchema,
+  calendarRangeQuerySchema,
+  type CalendarEntryType,
+  type CreateCalendarEntryInput,
+  type UpdateCalendarEntryInput,
+  type CalendarRangeQueryInput,
+  type CalendarEntryResponse,
+  type CalendarOccurrence,
+} from './schemas/calendar.js';
