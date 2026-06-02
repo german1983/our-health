@@ -177,6 +177,7 @@ export function CalendarPage() {
                           <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
                         )}
                         <span className="truncate">
+                          {o.time && <span className="opacity-70 tabular-nums">{o.time} </span>}
                           {o.title}
                           {o.type === 'ANNIVERSARY' && o.yearsSince != null && o.yearsSince > 0 && (
                             <span className="opacity-70"> ({o.yearsSince})</span>
@@ -224,6 +225,7 @@ export function CalendarPage() {
                       month: 'short',
                       day: 'numeric',
                     })}
+                    {o.time && <span className="ml-1 tabular-nums">· {o.time}</span>}
                   </span>
                 </button>
               ))}
@@ -260,7 +262,17 @@ function EntryDialog({ editing, defaultDate, onClose, onSaved }: EntryDialogProp
   const [date, setDate] = useState(
     editing ? editing.date.slice(0, 10) : ymd(defaultDate),
   );
+  // Timed events: "HH:MM" (24h, the wall-clock time we store as UTC) or '' for all-day.
+  const [time, setTime] = useState(
+    editing && editing.type === 'EVENT' && !editing.allDay ? editing.date.slice(11, 16) : '',
+  );
+  // Anniversaries: default to tracking the year unless the entry opted out.
+  const [trackYears, setTrackYears] = useState(editing?.trackYears ?? true);
   const [notes, setNotes] = useState(editing?.notes ?? '');
+
+  // Month (1-12) / day for the "year not tracked" anniversary picker.
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
 
   const saveMutation = useMutation({
     mutationFn: (body: CreateCalendarEntryInput) =>
@@ -275,15 +287,38 @@ function EntryDialog({ editing, defaultDate, onClose, onSaved }: EntryDialogProp
     onSuccess: onSaved,
   });
 
+  const untrackedAnniversary = type === 'ANNIVERSARY' && !trackYears;
+
   function handleSave() {
     if (!title.trim() || !date) return;
+
+    // Build the stored ISO datetime. We persist wall-clock-as-UTC so the day
+    // (and time) stay stable regardless of the viewer's timezone.
+    let isoDate: string;
+    if (untrackedAnniversary) {
+      // Year is "don't care" — pin to a leap year so Feb 29 survives.
+      isoDate = `2000-${date.slice(5, 10)}T12:00:00Z`;
+    } else if (type === 'EVENT' && time) {
+      isoDate = `${date}T${time}:00Z`;
+    } else {
+      isoDate = `${date}T12:00:00Z`;
+    }
+
     saveMutation.mutate({
       type,
       title: title.trim(),
       notes: notes.trim() || undefined,
-      // Noon UTC keeps the calendar date stable regardless of timezone.
-      date: new Date(date + 'T12:00:00Z').toISOString(),
+      date: isoDate,
+      allDay: type === 'EVENT' ? !time : true,
+      trackYears: type === 'ANNIVERSARY' ? trackYears : true,
     });
+  }
+
+  // Update just the month or day of `date` (used by the untracked picker).
+  function setMonthDay(nextMonth: number, nextDay: number) {
+    const daysInMonth = new Date(2000, nextMonth, 0).getDate(); // 2000 = leap
+    const clampedDay = Math.min(nextDay, daysInMonth);
+    setDate(`2000-${String(nextMonth).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
   }
 
   return (
@@ -334,10 +369,54 @@ function EntryDialog({ editing, defaultDate, onClose, onSaved }: EntryDialogProp
           <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus required />
         </div>
 
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Date</label>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-        </div>
+        {/* Anniversary: option to ignore the year entirely. */}
+        {type === 'ANNIVERSARY' && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={!trackYears}
+              onChange={(e) => setTrackYears(!e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Don't track since (year unknown)</span>
+              <span className="block text-xs text-muted-foreground">
+                Hides the year — the calendar won't show how many years it's been.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {untrackedAnniversary ? (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Date (month &amp; day)</label>
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={String(month)} onChange={(e) => setMonthDay(Number(e.target.value), day)}>
+                {MONTHS.map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </Select>
+              <Select value={String(day)} onChange={(e) => setMonthDay(month, Number(e.target.value))}>
+                {Array.from({ length: new Date(2000, month, 0).getDate() }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Date</label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            </div>
+            {type === 'EVENT' && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Time (optional)</label>
+                <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2">
           <label className="text-sm font-medium">Notes (optional)</label>
