@@ -34,6 +34,7 @@ export const mealSlotEnum = pgEnum('meal_slot', [
 ]);
 export const receiptStatusEnum = pgEnum('receipt_status', ['PENDING', 'PARSED', 'REVIEWED', 'FAILED']);
 export const paymentMethodTypeEnum = pgEnum('payment_method_type', ['CASH', 'CREDIT', 'DEBIT', 'BANK', 'OTHER']);
+export const calendarEntryTypeEnum = pgEnum('calendar_entry_type', ['ANNIVERSARY', 'EVENT']);
 
 // ==================== Auth & Household ====================
 
@@ -758,4 +759,37 @@ export const chainProductCodesRelations = relations(chainProductCodes, ({ one })
 export const receiptAdjustmentsRelations = relations(receiptAdjustments, ({ one }) => ({
   receipt: one(receipts, { fields: [receiptAdjustments.receiptId], references: [receipts.id] }),
   category: one(categories, { fields: [receiptAdjustments.categoryId], references: [categories.id] }),
+}));
+
+// ==================== Calendar ====================
+
+export const calendarEntries = pgTable(
+  'calendar_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+    type: calendarEntryTypeEnum('type').notNull(),
+    title: text('title').notNull(),
+    notes: text('notes'),
+    /**
+     * The entry's date. For EVENT it's the single occurrence. For ANNIVERSARY
+     * it's the original date — only month/day matter for recurrence, but we
+     * keep the full date so "since YYYY" can be shown. Stored as a calendar
+     * date (no time component); see migration for the `date` column type.
+     */
+    date: timestamp('date', { withTimezone: true }).notNull(),
+    /** True for events with a time-of-day; false → all-day. */
+    allDay: boolean('all_day').notNull().default(true),
+    createdById: uuid('created_by_id').notNull().references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('calendar_entries_household_idx').on(t.householdId),
+    index('calendar_entries_date_idx').on(t.date),
+  ],
+);
+
+export const calendarEntriesRelations = relations(calendarEntries, ({ one }) => ({
+  household: one(households, { fields: [calendarEntries.householdId], references: [households.id] }),
+  createdBy: one(users, { fields: [calendarEntries.createdById], references: [users.id] }),
 }));
