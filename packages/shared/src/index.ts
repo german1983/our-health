@@ -188,6 +188,8 @@ export {
   updateReceiptAdjustmentSchema,
   updateReceiptSchema,
   updateReceiptItemSchema,
+  receiptListQuerySchema,
+  type ReceiptListQueryInput,
   type ReceiptStatus,
   type SupportedReceiptStore,
   type CreateReceiptInput,
