@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const receiptStatusEnum = z.enum(['PENDING', 'PARSED', 'REVIEWED', 'FAILED']);
+export const receiptStatusEnum = z.enum(['PENDING', 'PROCESSING', 'PARSED', 'REVIEWED', 'FAILED']);
 export type ReceiptStatus = z.infer<typeof receiptStatusEnum>;
 
 export const supportedReceiptStores = z.enum(['WALMART', 'LOBLAWS', 'FARM_BOY', 'UNKNOWN']);

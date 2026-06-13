@@ -115,33 +115,80 @@ const userInstruction = (hint?: string) =>
     ? `User hint: this receipt is from "${hint}". Verify against the image and parse it.`
     : 'Parse this receipt.';
 
-export async function parseReceiptImage(
+/**
+ * Kick off a background parse. Returns the OpenAI response id; the actual
+ * parsing happens server-side at OpenAI and is retrieved later via
+ * fetchReceiptParse. The HTTP round-trip here is just the upload of the
+ * image — so this stays under Vercel's per-function timeout even on Hobby.
+ */
+export async function startReceiptParseFromImage(
   imageDataUrl: string,
   hint?: string,
-): Promise<{ parsed: ParsedReceipt; transcript: string }> {
+): Promise<string> {
   const client = getClient();
-
-  const completion = await client.chat.completions.create({
+  const response = await client.responses.create({
     model: MODEL,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+    background: true,
+    instructions: SYSTEM_PROMPT,
+    input: [
       {
         role: 'user',
         content: [
-          { type: 'text', text: userInstruction(hint) },
-          { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
+          { type: 'input_text', text: userInstruction(hint) },
+          { type: 'input_image', image_url: imageDataUrl, detail: 'high' },
         ],
       },
     ],
-    response_format: {
-      type: 'json_schema',
-      json_schema: { name: 'parsed_receipt', strict: true, schema: RESPONSE_SCHEMA },
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'parsed_receipt',
+        strict: true,
+        schema: RESPONSE_SCHEMA,
+      },
     },
   });
+  return response.id;
+}
 
-  const raw = completion.choices[0]?.message?.content;
-  if (!raw) throw new Error('OpenAI returned an empty response');
-  return toParsedReceipt(JSON.parse(raw) as ModelResponse);
+export type ParseFetchStatus = 'pending' | 'completed' | 'failed';
+
+export interface ParseFetchResult {
+  status: ParseFetchStatus;
+  parsed?: ParsedReceipt;
+  transcript?: string;
+  error?: string;
+}
+
+/**
+ * Poll OpenAI for the background response. Maps OpenAI's lifecycle states
+ * onto a simple tri-state: queued/in_progress -> pending, completed -> our
+ * parsed payload, anything else -> failed (with the upstream message when
+ * available so the UI can surface it).
+ */
+export async function fetchReceiptParse(responseId: string): Promise<ParseFetchResult> {
+  const client = getClient();
+  const response = await client.responses.retrieve(responseId);
+
+  if (response.status === 'queued' || response.status === 'in_progress') {
+    return { status: 'pending' };
+  }
+  if (response.status !== 'completed') {
+    return {
+      status: 'failed',
+      error: response.error?.message ?? response.incomplete_details?.reason ?? response.status ?? 'failed',
+    };
+  }
+
+  const raw = response.output_text;
+  if (!raw) return { status: 'failed', error: 'OpenAI returned an empty response' };
+
+  try {
+    const { parsed, transcript } = toParsedReceipt(JSON.parse(raw) as ModelResponse);
+    return { status: 'completed', parsed, transcript };
+  } catch (err) {
+    return { status: 'failed', error: `JSON parse error: ${(err as Error).message}` };
+  }
 }
 
 export async function parseReceiptText(

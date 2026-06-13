@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, Link2, Link2Off, Lock, Plus, Trash2, Unlock } from 'lucide-react';
+import { ChevronLeft, Link2, Link2Off, Loader2, Lock, Plus, RefreshCw, Trash2, Unlock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -278,6 +278,28 @@ export function ReceiptDetailPage() {
     onSuccess: onReceiptUpdate,
   });
 
+  // Async receipt parsing: while OpenAI is still working in the background,
+  // the receipt sits in PROCESSING. We hit POST /poll which asks OpenAI for
+  // the result and, on completion, materializes items + flips status.
+  const pollParse = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<ReceiptResponse>(`/receipts/${id}/poll`);
+      return data;
+    },
+    onSuccess: onReceiptUpdate,
+  });
+
+  // 10s autopoll while PROCESSING. Stops as soon as status flips. Manual
+  // "Check now" button is also wired below.
+  useEffect(() => {
+    if (receipt?.status !== 'PROCESSING') return;
+    const t = setInterval(() => {
+      if (!pollParse.isPending) pollParse.mutate();
+    }, 10_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receipt?.status]);
+
   const sumLineTotals = useMemo(
     () => receipt?.items.reduce((sum, i) => sum + i.lineTotal, 0) ?? 0,
     [receipt],
@@ -330,6 +352,44 @@ export function ReceiptDetailPage() {
   }
 
   const locked = receipt.status === 'REVIEWED';
+
+  if (receipt.status === 'PROCESSING') {
+    return (
+      <div className="space-y-6">
+        <BackLink />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Loader2 className="h-5 w-5 animate-spin text-finance" />
+              Parsing your receipt…
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              The image is being read by the AI. This usually takes 30–90 seconds.
+              The page will refresh automatically every 10 seconds.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => pollParse.mutate()}
+                disabled={pollParse.isPending}
+              >
+                <RefreshCw className={cn('mr-2 h-4 w-4', pollParse.isPending && 'animate-spin')} />
+                Check now
+              </Button>
+              {pollParse.error && (
+                <span className="text-destructive">
+                  {(pollParse.error as { response?: { data?: { error?: string } } }).response?.data
+                    ?.error || 'Poll failed'}
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

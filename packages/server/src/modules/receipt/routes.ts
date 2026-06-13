@@ -139,6 +139,19 @@ router.get('/:id/raw', authenticate, requireHousehold, async (req, res, next) =>
   }
 });
 
+router.post('/:id/poll', authenticate, requireHousehold, async (req, res, next) => {
+  try {
+    const receipt = await receiptService.pollReceiptParse(
+      req.params.id,
+      req.householdId!,
+      req.userId!,
+    );
+    res.json(receipt);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/:id/reparse', authenticate, requireHousehold, async (req, res, next) => {
   try {
     const rawHint = typeof req.body?.storeHint === 'string' ? req.body.storeHint : undefined;
