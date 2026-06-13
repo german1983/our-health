@@ -31,7 +31,12 @@ import type {
   ReceiptResponse,
   TaxCategoryResponse,
 } from '@personal-budget/shared';
-import { parseReceiptFromImage, parseReceiptFromText } from './parsers/index.js';
+import {
+  fetchReceiptParse,
+  parseReceiptFromText,
+  startReceiptParseFromImage,
+  type ParsedReceipt,
+} from './parsers/index.js';
 
 const receiptRelations = {
   chain: true,
@@ -59,7 +64,7 @@ type ReceiptWithItems = {
   chain: { id: string; key: string; name: string } | null;
   storeId: string | null;
   matchedStore: { name: string } | null;
-  status: 'PENDING' | 'PARSED' | 'REVIEWED' | 'FAILED';
+  status: 'PENDING' | 'PROCESSING' | 'PARSED' | 'REVIEWED' | 'FAILED';
   purchasedAt: Date | null;
   subtotal: number | null;
   tax: number | null;
@@ -128,23 +133,17 @@ async function resolveChainId(key: string | null | undefined): Promise<string | 
   return chain?.id ?? null;
 }
 
-export async function createReceipt(opts: CreateReceiptOptions): Promise<ReceiptResponse> {
-  if (opts.storeId) {
-    const store = await db.query.stores.findFirst({
-      where: and(eq(stores.id, opts.storeId), eq(stores.householdId, opts.householdId)),
-    });
-    if (!store) throw new NotFoundError('Store');
-  }
-
-  const dataUrl = opts.imageBase64.startsWith('data:')
-    ? opts.imageBase64
-    : `data:image/jpeg;base64,${opts.imageBase64}`;
-
-  const { parsed, transcript } = await parseReceiptFromImage(dataUrl, opts.storeHint);
-  const chainId = await resolveChainId(parsed.store);
-
-  const matchedItems = await Promise.all(
-    parsed.items.map(async (item) => {
+/**
+ * Match a parsed item to a known presentation/product/tax category via chain
+ * mappings. Extracted so both the async poll-completion path and the
+ * reparse path can build the same receipt_items rows.
+ */
+async function buildMatchedItems(
+  parsedItems: ParsedReceipt['items'],
+  chainId: string | null,
+) {
+  return Promise.all(
+    parsedItems.map(async (item) => {
       // Chain SKU codes now point at a specific presentation; the parent
       // product is reached via that presentation. This means matching a chain
       // code automatically lands on the right size (700 g vs 1 kg).
@@ -152,7 +151,10 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
       let presentationId: string | null = null;
       if (item.rawCode && chainId) {
         const mapping = await db.query.chainProductCodes.findFirst({
-          where: and(eq(chainProductCodes.chainId, chainId), eq(chainProductCodes.code, item.rawCode)),
+          where: and(
+            eq(chainProductCodes.chainId, chainId),
+            eq(chainProductCodes.code, item.rawCode),
+          ),
           with: { presentation: true },
         });
         if (mapping?.presentation) {
@@ -181,54 +183,126 @@ export async function createReceipt(opts: CreateReceiptOptions): Promise<Receipt
       };
     }),
   );
+}
 
-  const status = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
+export async function createReceipt(opts: CreateReceiptOptions): Promise<ReceiptResponse> {
+  if (opts.storeId) {
+    const store = await db.query.stores.findFirst({
+      where: and(eq(stores.id, opts.storeId), eq(stores.householdId, opts.householdId)),
+    });
+    if (!store) throw new NotFoundError('Store');
+  }
 
-  const receiptId = await db.transaction(async (tx) => {
-    const [created] = await tx
-      .insert(receipts)
-      .values({
-        householdId: opts.householdId,
-        uploadedById: opts.userId,
-        storeId: opts.storeId,
+  const dataUrl = opts.imageBase64.startsWith('data:')
+    ? opts.imageBase64
+    : `data:image/jpeg;base64,${opts.imageBase64}`;
+
+  // Submit the image to OpenAI as a background job; the client will poll a
+  // separate endpoint for completion. This lets us return well within
+  // Vercel's per-function timeout even when the actual parse takes a minute.
+  const responseId = await startReceiptParseFromImage(dataUrl, opts.storeHint);
+
+  const [created] = await db
+    .insert(receipts)
+    .values({
+      householdId: opts.householdId,
+      uploadedById: opts.userId,
+      storeId: opts.storeId,
+      chainId: null,
+      parserVersion: null,
+      rawText: '',
+      parsedData: null,
+      status: 'PROCESSING',
+      currencyCode: opts.currencyCode,
+      openaiResponseId: responseId,
+    })
+    .returning({ id: receipts.id });
+
+  return getReceipt(created.id, opts.householdId);
+}
+
+/**
+ * Check on the background parse job and, if OpenAI is done, materialize the
+ * receipt (matched items, price records) and flip status to PARSED. Safe to
+ * call repeatedly: a no-op when the receipt is no longer PROCESSING.
+ */
+export async function pollReceiptParse(
+  receiptId: string,
+  householdId: string,
+  userId: string,
+): Promise<ReceiptResponse> {
+  const receipt = await db.query.receipts.findFirst({
+    where: and(eq(receipts.id, receiptId), eq(receipts.householdId, householdId)),
+  });
+  if (!receipt) throw new NotFoundError('Receipt');
+  if (receipt.status !== 'PROCESSING' || !receipt.openaiResponseId) {
+    return getReceipt(receiptId, householdId);
+  }
+
+  const result = await fetchReceiptParse(receipt.openaiResponseId);
+  if (result.status === 'pending') {
+    return getReceipt(receiptId, householdId);
+  }
+  if (result.status === 'failed') {
+    await db
+      .update(receipts)
+      .set({
+        status: 'FAILED',
+        openaiResponseId: null,
+        rawText: result.error ?? 'OpenAI parse failed',
+      })
+      .where(eq(receipts.id, receiptId));
+    return getReceipt(receiptId, householdId);
+  }
+
+  // Completed — populate items + price records the same way the original
+  // synchronous path did.
+  const parsed = result.parsed!;
+  const transcript = result.transcript ?? '';
+  const chainId = await resolveChainId(parsed.store);
+  const matchedItems = await buildMatchedItems(parsed.items, chainId);
+  const finalStatus = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(receipts)
+      .set({
+        status: finalStatus,
         chainId,
         parserVersion: parsed.parserVersion,
         rawText: transcript,
         parsedData: parsed,
-        status,
         purchasedAt: parsed.purchasedAt ?? null,
         subtotal: parsed.subtotal ?? null,
         tax: parsed.tax ?? null,
         total: parsed.total ?? null,
-        currencyCode: opts.currencyCode,
+        openaiResponseId: null,
       })
-      .returning({ id: receipts.id });
+      .where(eq(receipts.id, receiptId));
 
     if (matchedItems.length > 0) {
       await tx
         .insert(receiptItems)
-        .values(matchedItems.map((i) => ({ ...i, receiptId: created.id })));
+        .values(matchedItems.map((i) => ({ ...i, receiptId })));
     }
 
-    if (opts.storeId) {
+    if (receipt.storeId) {
       const toRecord = matchedItems.filter((i) => i.productId && i.unitPrice != null);
       if (toRecord.length > 0) {
         await tx.insert(priceRecords).values(
           toRecord.map((i) => ({
             productId: i.productId as string,
-            storeId: opts.storeId as string,
+            storeId: receipt.storeId as string,
             price: i.unitPrice as number,
-            currencyCode: opts.currencyCode,
-            recordedById: opts.userId,
+            currencyCode: receipt.currencyCode,
+            recordedById: userId,
           })),
         );
       }
     }
-
-    return created.id;
   });
 
-  return getReceipt(receiptId, opts.householdId);
+  return getReceipt(receiptId, householdId);
 }
 
 export async function createManualReceipt(args: {
@@ -442,45 +516,7 @@ export async function reparseReceipt(opts: ReparseOptions): Promise<ReceiptRespo
 
   const parsed = await parseReceiptFromText(existing.rawText, opts.storeHint);
   const chainId = await resolveChainId(parsed.store);
-
-  const matchedItems = await Promise.all(
-    parsed.items.map(async (item) => {
-      let productId: string | null = null;
-      let presentationId: string | null = null;
-      if (item.rawCode && chainId) {
-        const mapping = await db.query.chainProductCodes.findFirst({
-          where: and(
-            eq(chainProductCodes.chainId, chainId),
-            eq(chainProductCodes.code, item.rawCode),
-          ),
-          with: { presentation: true },
-        });
-        if (mapping?.presentation) {
-          presentationId = mapping.presentation.id;
-          productId = mapping.presentation.productId;
-        }
-      }
-      let taxCategoryId: string | null = null;
-      if (item.taxCode && chainId) {
-        const taxMapping = await db.query.chainTaxCodes.findFirst({
-          where: and(eq(chainTaxCodes.chainId, chainId), eq(chainTaxCodes.code, item.taxCode)),
-        });
-        taxCategoryId = taxMapping?.taxCategoryId ?? null;
-      }
-      return {
-        rawName: item.rawName,
-        rawCode: item.rawCode ?? null,
-        taxCode: item.taxCode ?? null,
-        taxCategoryId,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice ?? null,
-        lineTotal: item.lineTotal,
-        matched: !!productId,
-        productId,
-        presentationId,
-      };
-    }),
-  );
+  const matchedItems = await buildMatchedItems(parsed.items, chainId);
 
   const status = parsed.items.length === 0 ? 'FAILED' : 'PARSED';
 

@@ -132,10 +132,13 @@ export function ReceiptsPage() {
       });
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (receipt) => {
+      // The POST returns immediately with a PROCESSING receipt; the detail
+      // page will poll until OpenAI finishes parsing.
       queryClient.invalidateQueries({ queryKey: ['receipts'] });
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      navigate(`/receipts/${receipt.id}`);
     },
   });
 
@@ -217,7 +220,7 @@ export function ReceiptsPage() {
 
           <div className="flex gap-2">
             <Button onClick={handleSubmit} disabled={!file || submitMutation.isPending}>
-              {submitMutation.isPending ? 'Parsing…' : 'Save receipt'}
+              {submitMutation.isPending ? 'Uploading…' : 'Save receipt'}
             </Button>
             {file && (
               <Button variant="outline" onClick={() => setFile(null)}>

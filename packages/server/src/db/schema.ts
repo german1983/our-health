@@ -32,7 +32,7 @@ export const mealSlotEnum = pgEnum('meal_slot', [
   'DINNER',
   'EVENING_SNACK',
 ]);
-export const receiptStatusEnum = pgEnum('receipt_status', ['PENDING', 'PARSED', 'REVIEWED', 'FAILED']);
+export const receiptStatusEnum = pgEnum('receipt_status', ['PENDING', 'PROCESSING', 'PARSED', 'REVIEWED', 'FAILED']);
 export const paymentMethodTypeEnum = pgEnum('payment_method_type', ['CASH', 'CREDIT', 'DEBIT', 'BANK', 'OTHER']);
 export const calendarEntryTypeEnum = pgEnum('calendar_entry_type', ['ANNIVERSARY', 'EVENT']);
 
@@ -448,6 +448,9 @@ export const receipts = pgTable(
     parserVersion: text('parser_version'),
     rawText: text('raw_text').notNull(),
     parsedData: jsonb('parsed_data').$type<unknown>(),
+    // While status is PROCESSING, openai_response_id points at the background
+    // job at OpenAI; it's cleared when parsing terminates (PARSED or FAILED).
+    openaiResponseId: text('openai_response_id'),
     status: receiptStatusEnum('status').notNull().default('PENDING'),
     purchasedAt: timestamp('purchased_at', { withTimezone: true }),
     subtotal: doublePrecision('subtotal'),
