@@ -6,6 +6,7 @@ import {
   createReceiptAdjustmentSchema,
   createReceiptSchema,
   matchReceiptItemSchema,
+  receiptListQuerySchema,
   setItemFinanceCategorySchema,
   setItemTaxCategorySchema,
   supportedReceiptStores,
@@ -15,6 +16,7 @@ import {
   type AddReceiptItemInput,
   type CreateManualReceiptInput,
   type CreateReceiptAdjustmentInput,
+  type ReceiptListQueryInput,
   type UpdateReceiptAdjustmentInput,
   type UpdateReceiptInput,
   type UpdateReceiptItemInput,
@@ -112,14 +114,23 @@ router.delete('/items/:itemId', authenticate, requireHousehold, async (req, res,
   }
 });
 
-router.get('/', authenticate, requireHousehold, async (req, res, next) => {
-  try {
-    const receipts = await receiptService.listReceipts(req.householdId!);
-    res.json(receipts);
-  } catch (err) {
-    next(err);
-  }
-});
+router.get(
+  '/',
+  authenticate,
+  requireHousehold,
+  validate(receiptListQuerySchema, 'query'),
+  async (req, res, next) => {
+    try {
+      const receipts = await receiptService.listReceipts(
+        req.householdId!,
+        req.query as ReceiptListQueryInput,
+      );
+      res.json(receipts);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.get('/:id', authenticate, requireHousehold, async (req, res, next) => {
   try {

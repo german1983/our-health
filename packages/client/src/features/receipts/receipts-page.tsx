@@ -8,19 +8,33 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { StoreSelect } from '@/components/quick-selects';
 import api from '@/lib/api';
 import { compressImageToDataUrl } from '@/lib/image';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type {
+  ChainResponse,
   CreateManualReceiptInput,
   PaymentMethodResponse,
   ReceiptResponse,
+  ReceiptStatus,
   StorageSpaceResponse,
   StoreResponse,
   SupportedReceiptStore,
 } from '@personal-budget/shared';
 
 const STORE_OPTIONS: SupportedReceiptStore[] = ['WALMART', 'LOBLAWS', 'FARM_BOY'];
+
+/** Status filter options. '' is the default "active" view (hides REVIEWED). */
+const STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: '', label: 'Active (hide reviewed)' },
+  { value: 'ALL', label: 'All statuses' },
+  { value: 'PROCESSING', label: 'Processing' },
+  { value: 'PARSED', label: 'Parsed' },
+  { value: 'REVIEWED', label: 'Reviewed' },
+  { value: 'FAILED', label: 'Failed' },
+  { value: 'PENDING', label: 'Pending' },
+];
 
 export function ReceiptsPage() {
   const queryClient = useQueryClient();
@@ -44,6 +58,13 @@ export function ReceiptsPage() {
   const [manualTax, setManualTax] = useState('');
   const [manualTotal, setManualTotal] = useState('');
 
+  // List filters. statusFilter '' = active view (hides reviewed); 'ALL' = no
+  // status constraint; any enum value = that exact status.
+  const [statusFilter, setStatusFilter] = useState('');
+  const [chainFilter, setChainFilter] = useState('');
+  const [fromFilter, setFromFilter] = useState('');
+  const [toFilter, setToFilter] = useState('');
+
   useEffect(() => {
     if (!file) {
       setPreviewUrl(null);
@@ -59,9 +80,24 @@ export function ReceiptsPage() {
     queryFn: () => api.get<StoreResponse[]>('/stores').then((r) => r.data),
   });
 
+  const { data: chains } = useQuery({
+    queryKey: ['chains'],
+    queryFn: () => api.get<ChainResponse[]>('/chains').then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+
+  const receiptParams = {
+    status: statusFilter && statusFilter !== 'ALL' ? (statusFilter as ReceiptStatus) : undefined,
+    hideReviewed: statusFilter === '' ? 'true' : undefined,
+    chainId: chainFilter || undefined,
+    from: fromFilter || undefined,
+    to: toFilter || undefined,
+  };
+
   const { data: receipts } = useQuery({
-    queryKey: ['receipts'],
-    queryFn: () => api.get<ReceiptResponse[]>('/receipts').then((r) => r.data),
+    queryKey: ['receipts', receiptParams],
+    queryFn: () =>
+      api.get<ReceiptResponse[]>('/receipts', { params: receiptParams }).then((r) => r.data),
   });
 
   const { data: paymentMethods } = useQuery({
@@ -201,12 +237,7 @@ export function ReceiptsPage() {
               </label>
               <label className="text-sm space-y-1">
                 <span className="text-muted-foreground">Linked store</span>
-                <Select value={storeId} onChange={(e) => setStoreId(e.target.value)}>
-                  <option value="">— none —</option>
-                  {stores?.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </Select>
+                <StoreSelect value={storeId} onChange={setStoreId} options={stores ?? []} />
               </label>
               <label className="text-sm space-y-1">
                 <span className="text-muted-foreground">Currency</span>
@@ -251,9 +282,50 @@ export function ReceiptsPage() {
         <CardHeader>
           <CardTitle className="text-base">Recent receipts</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <label className="text-xs space-y-1">
+              <span className="text-muted-foreground">Status</span>
+              <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                {STATUS_FILTERS.map((s) => (
+                  <option key={s.value || 'active'} value={s.value}>{s.label}</option>
+                ))}
+              </Select>
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="text-muted-foreground">Chain</span>
+              <Select value={chainFilter} onChange={(e) => setChainFilter(e.target.value)}>
+                <option value="">All chains</option>
+                {chains?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="text-muted-foreground">From</span>
+              <Input type="date" value={fromFilter} onChange={(e) => setFromFilter(e.target.value)} />
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="text-muted-foreground">To</span>
+              <Input type="date" value={toFilter} onChange={(e) => setToFilter(e.target.value)} />
+            </label>
+          </div>
+          {(statusFilter || chainFilter || fromFilter || toFilter) && (
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter('');
+                setChainFilter('');
+                setFromFilter('');
+                setToFilter('');
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground underline"
+            >
+              Reset filters
+            </button>
+          )}
           {!receipts || receipts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No receipts yet.</p>
+            <p className="text-sm text-muted-foreground">No receipts match these filters.</p>
           ) : (
             receipts.map((r) => (
               <Link

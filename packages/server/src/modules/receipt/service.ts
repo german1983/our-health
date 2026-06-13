@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, ne, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../lib/db.js';
 import {
   categories,
@@ -22,6 +22,7 @@ import type {
   AddReceiptItemInput,
   CreateManualReceiptInput,
   CreateReceiptAdjustmentInput,
+  ReceiptListQueryInput,
   UpdateReceiptAdjustmentInput,
   UpdateReceiptInput,
   UpdateReceiptItemInput,
@@ -481,12 +482,29 @@ export async function getReceipt(id: string, householdId: string): Promise<Recei
   return formatReceipt(receipt as unknown as ReceiptWithItems);
 }
 
-export async function listReceipts(householdId: string): Promise<ReceiptResponse[]> {
+export async function listReceipts(
+  householdId: string,
+  filters: ReceiptListQueryInput = {},
+): Promise<ReceiptResponse[]> {
+  // The date the user thinks of a receipt by: when it was purchased, falling
+  // back to when it was uploaded. Used for both ordering and the date filter.
+  const effectiveDate = sql`coalesce(${receipts.purchasedAt}, ${receipts.createdAt})`;
+
+  const conds: SQL[] = [eq(receipts.householdId, householdId)];
+  if (filters.status) {
+    conds.push(eq(receipts.status, filters.status));
+  } else if (filters.hideReviewed) {
+    conds.push(ne(receipts.status, 'REVIEWED'));
+  }
+  if (filters.chainId) conds.push(eq(receipts.chainId, filters.chainId));
+  if (filters.from) conds.push(gte(effectiveDate, new Date(`${filters.from}T00:00:00Z`)));
+  if (filters.to) conds.push(lte(effectiveDate, new Date(`${filters.to}T23:59:59.999Z`)));
+
   const rows = await db.query.receipts.findMany({
-    where: eq(receipts.householdId, householdId),
+    where: and(...conds),
     with: receiptRelations,
-    orderBy: desc(receipts.createdAt),
-    limit: 50,
+    orderBy: desc(effectiveDate),
+    limit: 100,
   });
   // The list view doesn't render storage hints, so skip the lookup for speed.
   return rows.map((r) => formatReceipt(r as unknown as ReceiptWithItems));

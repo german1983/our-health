@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import api from '@/lib/api';
 import { UNITS } from '@personal-budget/shared';
-import type { CategoryResponse, CreateProductInput } from '@personal-budget/shared';
+import type { BrandResponse, CategoryResponse, CreateProductInput } from '@personal-budget/shared';
 import {
   NUTRITION_FIELDS,
   emptyNutritionForm,
@@ -98,11 +98,21 @@ interface ProductFormProps {
  */
 export function ProductForm({ value, onChange, twoColumn = true }: ProductFormProps) {
   const [categoryTouched, setCategoryTouched] = useState(!!value.categoryId);
+  const brandListId = useId();
 
   const { data: categoryTree } = useQuery({
     queryKey: ['finance-categories'],
     queryFn: () => api.get<CategoryResponse[]>('/finance/categories').then((r) => r.data),
     staleTime: 5 * 60_000,
+  });
+
+  // Brand suggestions for the typeahead — the endpoint narrows server-side to
+  // the typed text (max 20), so options stay relevant as you type.
+  const { data: brandSuggestions } = useQuery({
+    queryKey: ['brands', value.brand],
+    queryFn: () =>
+      api.get<BrandResponse[]>('/brands', { params: { query: value.brand } }).then((r) => r.data),
+    staleTime: 60_000,
   });
 
   const expenseCategories = useMemo(
@@ -141,7 +151,17 @@ export function ProductForm({ value, onChange, twoColumn = true }: ProductFormPr
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Brand</label>
-          <Input value={value.brand} onChange={(e) => set('brand', e.target.value)} />
+          <Input
+            value={value.brand}
+            onChange={(e) => set('brand', e.target.value)}
+            list={brandListId}
+            autoComplete="off"
+          />
+          <datalist id={brandListId}>
+            {brandSuggestions?.map((b) => (
+              <option key={b.id} value={b.name} />
+            ))}
+          </datalist>
         </div>
         <div className="space-y-1 sm:col-span-2">
           <label className="text-sm font-medium">Image URL</label>

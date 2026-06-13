@@ -1,12 +1,18 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import api from '@/lib/api';
-import type { CategoryResponse, SpaceType, StorageSpaceResponse } from '@personal-budget/shared';
+import type {
+  CategoryResponse,
+  ChainResponse,
+  SpaceType,
+  StorageSpaceResponse,
+  StoreResponse,
+} from '@personal-budget/shared';
 
 const SPACE_TYPE_LABELS: Record<SpaceType, string> = {
   FRIDGE: 'Fridge',
@@ -308,6 +314,139 @@ export function StorageSelect({
             <p className="text-sm text-destructive">
               {(createMutation.error as { response?: { data?: { error?: string } } }).response?.data
                 ?.error || 'Could not create storage space'}
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreate}
+              disabled={createMutation.isPending || !name.trim()}
+            >
+              {createMutation.isPending ? 'Creating…' : 'Create & select'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </Dialog>
+      )}
+    </>
+  );
+}
+
+// ==================== Store ====================
+
+interface StoreSelectProps {
+  value: string;
+  onChange: (id: string) => void;
+  options: Option[];
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+}
+
+/**
+ * Household-store dropdown with an inline "+" that opens a create dialog. A new
+ * store can optionally be linked to a chain (which drives tax-code/SKU reuse on
+ * receipts). New stores are selected automatically and the cached list refreshed.
+ */
+export function StoreSelect({
+  value,
+  onChange,
+  options,
+  placeholder = '— none —',
+  disabled,
+  className,
+}: StoreSelectProps) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [chainId, setChainId] = useState('');
+
+  // Chains are only needed once the dialog is open.
+  const { data: chains } = useQuery({
+    queryKey: ['chains'],
+    queryFn: () => api.get<ChainResponse[]>('/chains').then((r) => r.data),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (body: { name: string; chainId?: string }) =>
+      api.post<StoreResponse>('/stores', body).then((r) => r.data),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ['stores'] });
+      onChange(created.id);
+      setOpen(false);
+      setName('');
+      setChainId('');
+    },
+  });
+
+  function handleCreate() {
+    if (!name.trim()) return;
+    createMutation.mutate({ name: name.trim(), chainId: chainId || undefined });
+  }
+
+  return (
+    <>
+      <SelectWithAddButton
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        className={className}
+        onAdd={() => setOpen(true)}
+        addTitle="New store"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </SelectWithAddButton>
+
+      {open && (
+      <Dialog open onClose={() => setOpen(false)}>
+        <DialogHeader>
+          <DialogTitle>New store</DialogTitle>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleCreate();
+          }}
+          className="space-y-4"
+        >
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Name</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g., Farm Boy Barrhaven"
+              autoFocus
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Chain (optional)</label>
+            <Select value={chainId} onChange={(e) => setChainId(e.target.value)}>
+              <option value="">— none —</option>
+              {chains?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Linking a chain lets receipts reuse its tax codes and product SKUs.
+            </p>
+          </div>
+          {createMutation.error && (
+            <p className="text-sm text-destructive">
+              {(createMutation.error as { response?: { data?: { error?: string } } }).response?.data
+                ?.error || 'Could not create store'}
             </p>
           )}
           <DialogFooter>

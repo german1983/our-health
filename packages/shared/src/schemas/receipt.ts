@@ -17,6 +17,25 @@ export const createReceiptSchema = z.object({
 });
 export type CreateReceiptInput = z.infer<typeof createReceiptSchema>;
 
+/**
+ * Filters for the receipts list (all optional, all from the query string).
+ * `status` pins to one exact status; `hideReviewed` (the UI default) drops
+ * REVIEWED receipts when no explicit status is given. `from`/`to` are an
+ * inclusive date range on the receipt's effective date (purchasedAt, falling
+ * back to createdAt).
+ */
+export const receiptListQuerySchema = z.object({
+  status: receiptStatusEnum.optional(),
+  chainId: z.string().uuid().optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'from must be YYYY-MM-DD').optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'to must be YYYY-MM-DD').optional(),
+  hideReviewed: z
+    .union([z.literal('true'), z.literal('false')])
+    .transform((v) => v === 'true')
+    .optional(),
+});
+export type ReceiptListQueryInput = z.infer<typeof receiptListQuerySchema>;
+
 export const createManualReceiptSchema = z.object({
   purchasedAt: z.string().datetime().optional(),
   storeId: z.string().uuid().optional(),
