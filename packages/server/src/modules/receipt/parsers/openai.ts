@@ -12,7 +12,7 @@ For each receipt:
 - items: each line item:
   - rawName: the description AS PRINTED on the receipt.
   - rawCode: the SKU/UPC code printed next to the item (digits only), or null. If the line starts with a parenthesized quantity prefix like "(2)" or "(3)" followed by the code, drop the prefix and use the code (the quantity goes into the quantity field).
-  - taxCode: the tax-category code printed on this line. It is one or more uppercase letters (often 1–4) and may appear EITHER between the description and the price (Loblaws style, e.g. "MRJ", "HMRJ", "RQ") OR at the far right (Walmart / Farm Boy style, e.g. "J", "H", "D", "E", "X", "G"). Capture the letters EXACTLY as printed; do NOT interpret what they mean and do NOT normalize case. Null when absent.
+  - taxCode: the tax-category code printed on this line. It is one or more uppercase letters (often 1–4) and may appear EITHER between the description and the price (Loblaws style, e.g. "MRJ", "HMRJ", "RQ") OR at the far right (Walmart / Farm Boy style, e.g. "J", "H", "D", "E", "X", "G"). Farm Boy marks a taxable item with "-HST" to the right of the price — capture this as "HST" (drop the leading hyphen). Capture the letters EXACTLY as printed; do NOT interpret what they mean and do NOT normalize case. Null when absent — e.g. a Farm Boy line with no "-HST" is not taxed.
   - quantity: number (default 1).
   - unitPrice: price per single unit, or null.
   - lineTotal: total dollar amount for that line (always the rightmost dollar value).
@@ -24,6 +24,9 @@ Rules:
 - For "N @ \$P.PP" multipliers, quantity = N, unitPrice = P.PP, lineTotal = the printed dollar total (which equals N × P.PP).
 - For deal pricing like "2 @ 2/\$8.00" (the rightmost number is the printed line total, e.g. 8.00), quantity = 2, lineTotal = 8.00, unitPrice = effective per-unit price (8.00 ÷ 2 = 4.00). Ignore any "or" alternative pricing line that immediately precedes (e.g. "\$5.19 ea or 2/\$8.00 KB") — it is advisory, the @ line is authoritative.
 - A line that prints points or loyalty units instead of dollars (e.g. "400 Pts") is not a purchased item — skip it.
+- Store coupons: a line beginning with "CPN:" (often printed "CPN: CPN - <item name>") is a store coupon, NOT a product. Emit it as a line item with rawName set to the coupon description as printed (e.g. "CPN - FB Freeze Dried"), rawCode null, taxCode null, quantity 1, unitPrice null, and lineTotal set to the NEGATIVE dollar amount shown (e.g. -2.00). Coupons may appear anywhere in the list — not necessarily next to the item they apply to — so keep them in the order printed. Fold any immediately-following "Item Store Coupon: \$X.XX" detail line into the coupon; do NOT emit it as its own line.
+- An "Item discount: \$X.XX" sub-line printed beneath a product is informational only: the price shown for that product is already the final, discounted price. Do not emit a separate line for it and do not change the product's printed lineTotal.
+- Farm Boy total labels are confusing: "Net Sales" is the pre-tax amount AFTER coupons — map it to subtotal. "HST" maps to tax. "Total Sales" (equivalently Farm Boy's "SUB TOTAL" line, which is actually the grand total) maps to total. Do NOT map Farm Boy's "SUB TOTAL" line to subtotal.
 - All numeric fields must be JSON numbers, not strings.`;
 
 const RESPONSE_SCHEMA = {
